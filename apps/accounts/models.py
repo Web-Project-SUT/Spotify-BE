@@ -5,6 +5,7 @@ from django.db import models
 from django.db.models import Q
 from django.utils import timezone
 
+from apps.common.media import upload_filename
 from apps.common.models import TimeStampedModel, UUIDModel
 
 
@@ -29,7 +30,11 @@ class Gender(models.TextChoices):
 
 
 def avatar_path(instance, filename):
-    return f"avatars/{instance.id}/{filename}"
+    return f"avatars/{instance.id}/{upload_filename(filename)}"
+
+
+def sample_work_path(instance, filename):
+    return f"sample-works/{instance.artist_id}/{upload_filename(filename)}"
 
 
 class UserQuerySet(models.QuerySet):
@@ -93,7 +98,7 @@ class User(UUIDModel, TimeStampedModel, AbstractBaseUser, PermissionsMixin):
     birth_date = models.DateField(null=True, blank=True)
     gender = models.CharField(max_length=8, choices=Gender.choices, blank=True)
     bio = models.TextField(blank=True)
-    avatar = models.ImageField(upload_to=avatar_path, null=True, blank=True)
+    avatar = models.ImageField(upload_to=avatar_path, max_length=255, null=True, blank=True)
     accepted_policy_at = models.DateTimeField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
@@ -178,3 +183,15 @@ class Notification(UUIDModel, TimeStampedModel):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+class SampleWork(UUIDModel, TimeStampedModel):
+    artist = models.ForeignKey(ArtistProfile, on_delete=models.CASCADE, related_name="sample_works")
+    file = models.FileField(upload_to=sample_work_path)
+    title = models.CharField(max_length=120)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return self.title

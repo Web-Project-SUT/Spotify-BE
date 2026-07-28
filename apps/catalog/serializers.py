@@ -1,5 +1,7 @@
+from django.conf import settings
 from rest_framework import serializers
 
+from apps.common.validators import AllowedExtension, AudioSignature, MaxFileSize
 from apps.playlists.models import Playlist
 
 from . import services
@@ -25,6 +27,9 @@ class TrackListSerializer(serializers.ModelSerializer):
             "play_count",
             "unique_listener_count",
             "early_access_until",
+            "cover",
+            "audio_high",
+            "audio_low",
         ]
         read_only_fields = ["id", "artist", "play_count", "unique_listener_count"]
 
@@ -34,7 +39,7 @@ class AlbumListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Album
-        fields = ["id", "artist", "title", "release_year", "released_at", "created_at"]
+        fields = ["id", "artist", "title", "release_year", "released_at", "created_at", "cover"]
         read_only_fields = ["id", "artist", "created_at"]
 
 
@@ -88,3 +93,40 @@ class StreamSerializer(serializers.ModelSerializer):
         model = PlayEvent
         fields = ["id", "track", "playlist", "played_at"]
         read_only_fields = fields
+
+
+class AlbumCoverUploadSerializer(serializers.Serializer):
+    cover = serializers.ImageField(
+        validators=[
+            MaxFileSize(settings.MEDIA_IMAGE_MAX_BYTES),
+            AllowedExtension(settings.MEDIA_IMAGE_EXTENSIONS),
+        ]
+    )
+
+
+class TrackCoverUploadSerializer(serializers.Serializer):
+    cover = serializers.ImageField(
+        validators=[
+            MaxFileSize(settings.MEDIA_IMAGE_MAX_BYTES),
+            AllowedExtension(settings.MEDIA_IMAGE_EXTENSIONS),
+        ]
+    )
+
+
+class TrackAudioUploadSerializer(serializers.Serializer):
+    audio_high = serializers.FileField(
+        required=True,
+        validators=[
+            MaxFileSize(settings.MEDIA_AUDIO_MAX_BYTES),
+            AllowedExtension(settings.MEDIA_AUDIO_EXTENSIONS),
+            AudioSignature(),
+        ],
+    )
+    audio_low = serializers.FileField(
+        required=True,
+        validators=[
+            MaxFileSize(settings.MEDIA_AUDIO_MAX_BYTES),
+            AllowedExtension(settings.MEDIA_AUDIO_EXTENSIONS),
+            AudioSignature(),
+        ],
+    )

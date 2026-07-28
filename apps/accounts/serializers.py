@@ -1,9 +1,12 @@
+from django.conf import settings
 from django.db.models import Sum
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
+from apps.common.validators import AllowedExtension, MaxFileSize
+
 from . import services
-from .models import AccountStatus, ArtistProfile, User
+from .models import AccountStatus, ArtistProfile, SampleWork, User
 
 
 class ArtistListSerializer(serializers.ModelSerializer):
@@ -176,7 +179,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
     def validate(self, attrs):
         data = super().validate(attrs)
-        data["user"] = UserMeSerializer(self.user).data
+        data["user"] = UserMeSerializer(self.user, context=self.context).data
         return data
 
 
@@ -188,3 +191,36 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
     uid = serializers.CharField()
     token = serializers.CharField()
     new_password = serializers.CharField(min_length=8)
+
+
+class AvatarUploadSerializer(serializers.Serializer):
+    avatar = serializers.ImageField(
+        validators=[
+            MaxFileSize(settings.MEDIA_IMAGE_MAX_BYTES),
+            AllowedExtension(settings.MEDIA_IMAGE_EXTENSIONS),
+        ]
+    )
+
+
+class SampleWorkSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SampleWork
+        fields = ["id", "title", "file", "created_at"]
+        read_only_fields = fields
+
+
+class SampleWorkUploadSerializer(serializers.ModelSerializer):
+    file = serializers.FileField(
+        validators=[
+            MaxFileSize(settings.MEDIA_AUDIO_MAX_BYTES),
+            AllowedExtension(settings.MEDIA_IMAGE_EXTENSIONS + settings.MEDIA_AUDIO_EXTENSIONS),
+        ]
+    )
+
+    class Meta:
+        model = SampleWork
+        fields = ["title", "file"]
+
+    def create(self, validated_data):
+        artist = self.context["request"].user.artist_profile
+        return SampleWork.objects.create(artist=artist, **validated_data)

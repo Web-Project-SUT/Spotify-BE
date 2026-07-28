@@ -17,4 +17,9 @@ urlpatterns = [
         views.PlaylistTrackDetailView.as_view(),
         name="playlist-track-detail",
     ),
+    path(
+        "playlists/<uuid:pk>/cover/",
+        views.PlaylistCoverView.as_view(),
+        name="playlist-cover",
+    ),
 ] + router.urls

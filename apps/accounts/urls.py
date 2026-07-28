@@ -17,6 +17,7 @@ urlpatterns = [
     path("auth/refresh/", views.RefreshView.as_view(), name="refresh"),
     path("auth/logout/", views.LogoutView.as_view(), name="logout"),
     path("auth/me/", views.MeView.as_view(), name="me"),
+    path("auth/me/avatar/", views.AvatarView.as_view(), name="me-avatar"),
     path(
         "auth/password-reset/",
         views.PasswordResetRequestView.as_view(),
@@ -29,7 +30,22 @@ urlpatterns = [
     ),
     path("artists/", views.ArtistListView.as_view(), name="artist-list"),
     path("artists/me/", views.ArtistMeView.as_view(), name="artist-me"),
+    path(
+        "artists/me/sample-works/",
+        views.SampleWorkListCreateView.as_view(),
+        name="sample-work-list-create",
+    ),
+    path(
+        "artists/me/sample-works/<uuid:pk>/",
+        views.SampleWorkDeleteView.as_view(),
+        name="sample-work-delete",
+    ),
     path("artists/<uuid:pk>/", views.ArtistDetailView.as_view(), name="artist-detail"),
+    path(
+        "artists/<uuid:pk>/sample-works/",
+        views.ArtistSampleWorkListView.as_view(),
+        name="artist-sample-works",
+    ),
     path("users/<uuid:pk>/", views.UserDetailView.as_view(), name="user-detail"),
     path("users/<uuid:pk>/follow/", views.FollowView.as_view(), name="user-follow"),
 ]
