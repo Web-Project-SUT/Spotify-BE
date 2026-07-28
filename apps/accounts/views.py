@@ -1,5 +1,6 @@
 from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import send_mail
+from django.shortcuts import get_object_or_404
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from drf_spectacular.utils import extend_schema
@@ -10,9 +11,9 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from apps.common.permissions import IsApprovedArtist
+from apps.common.permissions import IsApprovedArtist, IsListenerOrArtist
 
-from .models import AccountStatus, ArtistProfile, User
+from .models import AccountStatus, ArtistProfile, Follow, User
 from .serializers import (
     ArtistDetailSerializer,
     ArtistListSerializer,
@@ -24,6 +25,7 @@ from .serializers import (
     RegisterArtistSerializer,
     RegisterListenerSerializer,
     UserMeSerializer,
+    UserPublicSerializer,
 )
 
 
@@ -168,9 +170,9 @@ class ArtistListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return ArtistProfile.objects.filter(
-            user__status=AccountStatus.ACTIVE
-        ).select_related("user")
+        return ArtistProfile.objects.filter(user__status=AccountStatus.ACTIVE).select_related(
+            "user"
+        )
 
 
 class ArtistDetailView(generics.RetrieveAPIView):
@@ -189,3 +191,34 @@ class ArtistMeView(generics.UpdateAPIView):
 
     def get_object(self):
         return self.request.user.artist_profile
+
+
+class UserDetailView(generics.RetrieveAPIView):
+    serializer_class = UserPublicSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    queryset = User.objects.all()
+
+
+class FollowView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsListenerOrArtist]
+
+    @extend_schema(request=None, responses={201: None, 200: None, 400: None})
+    def post(self, request, pk):
+        target = get_object_or_404(User, pk=pk)
+        if target.id == request.user.id:
+            return Response(
+                {
+                    "detail": "You cannot follow yourself.",
+                    "code": "self_follow",
+                    "fields": None,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        _, created = Follow.objects.get_or_create(follower=request.user, following=target)
+        return Response(status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @extend_schema(responses={204: None})
+    def delete(self, request, pk):
+        target = get_object_or_404(User, pk=pk)
+        Follow.objects.filter(follower=request.user, following=target).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)

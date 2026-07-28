@@ -30,4 +30,6 @@ urlpatterns = [
     path("artists/", views.ArtistListView.as_view(), name="artist-list"),
     path("artists/me/", views.ArtistMeView.as_view(), name="artist-me"),
     path("artists/<uuid:pk>/", views.ArtistDetailView.as_view(), name="artist-detail"),
+    path("users/<uuid:pk>/", views.UserDetailView.as_view(), name="user-detail"),
+    path("users/<uuid:pk>/follow/", views.FollowView.as_view(), name="user-follow"),
 ]

@@ -31,6 +31,10 @@ class IsAdmin(RolePermission):
     allowed_roles = ("admin",)
 
 
+class IsListenerOrArtist(RolePermission):
+    allowed_roles = ("listener", "artist")
+
+
 class IsApprovedArtist(IsArtist):
     message = "Only approved artists may perform this action."
 

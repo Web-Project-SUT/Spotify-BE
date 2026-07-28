@@ -73,6 +73,12 @@ class ArtistMeSerializer(serializers.ModelSerializer):
         return instance
 
 
+class UserPublicSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ["id", "username", "display_name", "role", "avatar"]
+
+
 class UserMeSerializer(serializers.ModelSerializer):
     tier = serializers.CharField(read_only=True)
 
