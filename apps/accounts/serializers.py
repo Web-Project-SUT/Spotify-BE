@@ -1,8 +1,76 @@
+from django.db.models import Sum
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from . import services
-from .models import User
+from .models import AccountStatus, ArtistProfile, User
+
+
+class ArtistListSerializer(serializers.ModelSerializer):
+    id = serializers.UUIDField(source="user_id", read_only=True)
+    verified = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ArtistProfile
+        fields = ["id", "stage_name", "verified"]
+
+    def get_verified(self, obj) -> bool:
+        return obj.user.status == AccountStatus.ACTIVE
+
+
+class ArtistDetailSerializer(serializers.ModelSerializer):
+    id = serializers.UUIDField(source="user_id", read_only=True)
+    bio = serializers.CharField(source="user.bio", read_only=True)
+    verified = serializers.SerializerMethodField()
+    total_plays = serializers.SerializerMethodField()
+    total_listeners = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ArtistProfile
+        fields = [
+            "id",
+            "stage_name",
+            "portfolio_url",
+            "bio",
+            "verified",
+            "total_plays",
+            "total_listeners",
+        ]
+
+    def get_verified(self, obj) -> bool:
+        return obj.user.status == AccountStatus.ACTIVE
+
+    def get_total_plays(self, obj) -> int:
+        return obj.user.tracks.aggregate(total=Sum("play_count"))["total"] or 0
+
+    def get_total_listeners(self, obj) -> int:
+        return obj.user.tracks.aggregate(total=Sum("unique_listener_count"))["total"] or 0
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        is_gold = bool(request and request.user.is_authenticated and request.user.tier == "gold")
+        if not is_gold:
+            data.pop("total_plays", None)
+            data.pop("total_listeners", None)
+        return data
+
+
+class ArtistMeSerializer(serializers.ModelSerializer):
+    bio = serializers.CharField(source="user.bio", required=False, allow_blank=True)
+
+    class Meta:
+        model = ArtistProfile
+        fields = ["stage_name", "portfolio_url", "bio"]
+
+    def update(self, instance, validated_data):
+        user_data = validated_data.pop("user", None)
+        instance = super().update(instance, validated_data)
+        if user_data:
+            for attr, value in user_data.items():
+                setattr(instance.user, attr, value)
+            instance.user.save(update_fields=list(user_data.keys()))
+        return instance
 
 
 class UserMeSerializer(serializers.ModelSerializer):

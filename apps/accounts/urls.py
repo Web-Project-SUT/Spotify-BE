@@ -27,4 +27,7 @@ urlpatterns = [
         views.PasswordResetConfirmView.as_view(),
         name="password-reset-confirm",
     ),
+    path("artists/", views.ArtistListView.as_view(), name="artist-list"),
+    path("artists/me/", views.ArtistMeView.as_view(), name="artist-me"),
+    path("artists/<uuid:pk>/", views.ArtistDetailView.as_view(), name="artist-detail"),
 ]

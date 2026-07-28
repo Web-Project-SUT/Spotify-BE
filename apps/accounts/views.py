@@ -10,8 +10,13 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from .models import User
+from apps.common.permissions import IsApprovedArtist
+
+from .models import AccountStatus, ArtistProfile, User
 from .serializers import (
+    ArtistDetailSerializer,
+    ArtistListSerializer,
+    ArtistMeSerializer,
     CustomTokenObtainPairSerializer,
     MeUpdateSerializer,
     PasswordResetConfirmSerializer,
@@ -156,3 +161,31 @@ class PasswordResetConfirmView(APIView):
         user.set_password(data["new_password"])
         user.save(update_fields=["password"])
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ArtistListView(generics.ListAPIView):
+    serializer_class = ArtistListSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return ArtistProfile.objects.filter(
+            user__status=AccountStatus.ACTIVE
+        ).select_related("user")
+
+
+class ArtistDetailView(generics.RetrieveAPIView):
+    serializer_class = ArtistDetailSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    lookup_url_kwarg = "pk"
+    lookup_field = "user_id"
+
+    def get_queryset(self):
+        return ArtistProfile.objects.select_related("user")
+
+
+class ArtistMeView(generics.UpdateAPIView):
+    serializer_class = ArtistMeSerializer
+    permission_classes = [permissions.IsAuthenticated, IsApprovedArtist]
+
+    def get_object(self):
+        return self.request.user.artist_profile
