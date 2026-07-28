@@ -65,7 +65,15 @@ class FollowAdmin(admin.ModelAdmin):
 
 @admin.register(UserPreferences)
 class UserPreferencesAdmin(admin.ModelAdmin):
-    list_display = ["user", "language", "volume"]
+    list_display = [
+        "user",
+        "language",
+        "notif_limit",
+        "volume",
+        "repeat_mode",
+        "shuffle",
+        "playback_quality",
+    ]
 
 
 @admin.register(Notification)

@@ -29,6 +29,23 @@ class Gender(models.TextChoices):
     OTHER = "other", "Other"
 
 
+class Language(models.TextChoices):
+    EN = "en", "English"
+    FA = "fa", "Persian"
+    ES = "es", "Spanish"
+
+
+class RepeatMode(models.TextChoices):
+    OFF = "off", "Off"
+    ALL = "all", "All"
+    ONE = "one", "One"
+
+
+class PlaybackQuality(models.TextChoices):
+    HIGH = "high", "High"
+    LOW = "low", "Low"
+
+
 def avatar_path(instance, filename):
     return f"avatars/{instance.id}/{upload_filename(filename)}"
 
@@ -152,17 +169,27 @@ class Follow(TimeStampedModel):
         return f"{self.follower_id} -> {self.following_id}"
 
 
-class UserPreferences(models.Model):
+class UserPreferences(TimeStampedModel):
+    """Per-user settings, synced across devices.
+
+    `auto_now` on `updated_at` only fires on `.save()`, not on
+    `QuerySet.update()` — all writes must go through the serializer/service
+    so `updated_at` stays meaningful.
+    """
+
     user = models.OneToOneField(
         User, on_delete=models.CASCADE, primary_key=True, related_name="preferences"
     )
-    language = models.CharField(
-        max_length=5,
-        choices=[("en", "EN"), ("fa", "FA"), ("es", "ES")],
-        default="en",
-    )
+    language = models.CharField(max_length=5, choices=Language.choices, default=Language.EN)
     notif_limit = models.BooleanField(default=False)
-    volume = models.FloatField(default=0.8, validators=[MinValueValidator(0), MaxValueValidator(1)])
+    volume = models.PositiveSmallIntegerField(
+        default=80, validators=[MinValueValidator(0), MaxValueValidator(100)]
+    )
+    repeat_mode = models.CharField(max_length=4, choices=RepeatMode.choices, default=RepeatMode.OFF)
+    shuffle = models.BooleanField(default=False)
+    playback_quality = models.CharField(
+        max_length=4, choices=PlaybackQuality.choices, default=PlaybackQuality.HIGH
+    )
 
     def __str__(self):
         return f"preferences for {self.user_id}"

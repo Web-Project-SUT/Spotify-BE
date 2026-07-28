@@ -15,6 +15,7 @@ from apps.common.permissions import IsApprovedArtist, IsArtist, IsListenerOrArti
 from apps.common.quotas import AvatarUploadQuota
 from apps.common.views import MediaResourceView
 
+from . import services
 from .models import AccountStatus, ArtistProfile, Follow, SampleWork, User
 from .serializers import (
     ArtistDetailSerializer,
@@ -30,6 +31,7 @@ from .serializers import (
     SampleWorkSerializer,
     SampleWorkUploadSerializer,
     UserMeSerializer,
+    UserPreferencesSerializer,
     UserPublicSerializer,
 )
 
@@ -122,6 +124,20 @@ class MeView(generics.RetrieveUpdateDestroyAPIView):
         instance = self.get_object()
         instance.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PreferencesView(generics.RetrieveUpdateAPIView):
+    # No role gate: every authenticated user (listener, artist, support,
+    # admin) has preferences. PUT is deliberately excluded (via
+    # http_method_names) — DRF's PUT requires every writable field, so a
+    # device sending its stale full view would silently revert fields another
+    # device changed since. PATCH gives free per-field merge instead.
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = UserPreferencesSerializer
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_object(self):
+        return services.get_preferences(self.request.user)
 
 
 class PasswordResetRequestView(APIView):

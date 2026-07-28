@@ -5,7 +5,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 
-from apps.accounts.models import AccountStatus, ArtistProfile, Role, User
+from apps.accounts.models import AccountStatus, ArtistProfile, Role, User, UserPreferences
 from apps.catalog.models import Album, Track
 from apps.subscriptions.models import Subscription, SubscriptionPlan, Tier
 
@@ -22,7 +22,12 @@ class Command(BaseCommand):
             tier=Tier.GOLD, defaults={"monthly_price": Decimal("9.99")}
         )
 
-        self._make_user("listener@demo.com", "listener", Role.LISTENER)
+        self._make_user(
+            "listener@demo.com",
+            "listener",
+            Role.LISTENER,
+            preferences={"notif_limit": True, "language": "fa"},
+        )
         silver = self._make_user("silver@demo.com", "silver_listener", Role.LISTENER)
         gold = self._make_user("gold@demo.com", "gold_listener", Role.LISTENER)
         nova = self._make_user("nova@demo.com", "nova_ray", Role.ARTIST, display_name="Nova Ray")
@@ -67,7 +72,7 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS("Demo data seeded."))
 
-    def _make_user(self, email, username, role, **extra):
+    def _make_user(self, email, username, role, preferences=None, **extra):
         defaults = {
             "username": username,
             "role": role,
@@ -82,6 +87,7 @@ class Command(BaseCommand):
         if created:
             user.set_password("password123")
             user.save(update_fields=["password"])
+        UserPreferences.objects.get_or_create(user=user, defaults=preferences or {})
         return user
 
     def _make_subscription(self, user, plan):

@@ -1,12 +1,13 @@
 from django.conf import settings
 from django.db.models import Sum
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from apps.common.validators import AllowedExtension, MaxFileSize
 
 from . import services
-from .models import AccountStatus, ArtistProfile, SampleWork, User
+from .models import AccountStatus, ArtistProfile, SampleWork, User, UserPreferences
 
 
 class ArtistListSerializer(serializers.ModelSerializer):
@@ -82,8 +83,24 @@ class UserPublicSerializer(serializers.ModelSerializer):
         fields = ["id", "username", "display_name", "role", "avatar"]
 
 
+class UserPreferencesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserPreferences
+        fields = [
+            "language",
+            "notif_limit",
+            "volume",
+            "repeat_mode",
+            "shuffle",
+            "playback_quality",
+            "updated_at",
+        ]
+        read_only_fields = ["updated_at"]
+
+
 class UserMeSerializer(serializers.ModelSerializer):
     tier = serializers.CharField(read_only=True)
+    preferences = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -100,8 +117,18 @@ class UserMeSerializer(serializers.ModelSerializer):
             "birth_date",
             "gender",
             "created_at",
+            "preferences",
         ]
         read_only_fields = ["id", "username", "role", "status", "tier", "created_at"]
+
+    @extend_schema_field(UserPreferencesSerializer)
+    def get_preferences(self, obj):
+        # A read must not write: fall back to an unsaved instance (defaults,
+        # updated_at=null) rather than calling services.get_preferences(),
+        # since this serializer backs /me, register, and login responses
+        # where a lazy INSERT would be a surprising side effect.
+        prefs = getattr(obj, "preferences", None) or UserPreferences(user=obj)
+        return UserPreferencesSerializer(prefs).data
 
 
 class MeUpdateSerializer(serializers.ModelSerializer):
