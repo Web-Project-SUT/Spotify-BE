@@ -4,7 +4,6 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounts.models import ArtistProfile
 from apps.accounts.tests.factories import ArtistUserFactory, UserFactory
-from apps.catalog.models import Track
 from apps.catalog.tests.factories import AlbumFactory, TrackFactory
 from apps.subscriptions.tests.factories import SubscriptionFactory
 
@@ -49,15 +48,15 @@ class AlbumDetailTests(APITestCase):
         artist = ArtistUserFactory()
         other_artist = ArtistUserFactory()
         album = AlbumFactory(artist=artist)
-        TrackFactory(artist=artist, album=album)
-        TrackFactory(artist=artist, album=album)
+        own_track_a = TrackFactory(artist=artist, album=album)
+        own_track_b = TrackFactory(artist=artist, album=album)
         TrackFactory(artist=other_artist)
 
         listener = UserFactory()
         response = self.client.get(f"/api/albums/{album.id}/", **auth_headers(listener))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        track_count = Track.objects.filter(album=album).count()
-        self.assertEqual(track_count, 2)
+        returned_ids = {track["id"] for track in response.data["tracks"]}
+        self.assertEqual(returned_ids, {str(own_track_a.id), str(own_track_b.id)})
 
 
 class TrackSearchTests(APITestCase):

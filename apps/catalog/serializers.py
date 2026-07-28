@@ -6,21 +6,6 @@ from . import services
 from .models import Album, PlayEvent, Track
 
 
-class AlbumSerializer(serializers.ModelSerializer):
-    artist = serializers.UUIDField(source="artist_id", read_only=True)
-
-    class Meta:
-        model = Album
-        fields = ["id", "artist", "title", "release_year", "released_at", "created_at"]
-        read_only_fields = ["id", "artist", "created_at"]
-
-
-class AlbumWriteSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Album
-        fields = ["title", "release_year", "released_at"]
-
-
 class TrackListSerializer(serializers.ModelSerializer):
     artist = serializers.UUIDField(source="artist_id", read_only=True)
     album = serializers.UUIDField(source="album_id", read_only=True, allow_null=True)
@@ -42,6 +27,28 @@ class TrackListSerializer(serializers.ModelSerializer):
             "early_access_until",
         ]
         read_only_fields = ["id", "artist", "play_count", "unique_listener_count"]
+
+
+class AlbumListSerializer(serializers.ModelSerializer):
+    artist = serializers.UUIDField(source="artist_id", read_only=True)
+
+    class Meta:
+        model = Album
+        fields = ["id", "artist", "title", "release_year", "released_at", "created_at"]
+        read_only_fields = ["id", "artist", "created_at"]
+
+
+class AlbumDetailSerializer(AlbumListSerializer):
+    tracks = TrackListSerializer(many=True, read_only=True)
+
+    class Meta(AlbumListSerializer.Meta):
+        fields = AlbumListSerializer.Meta.fields + ["tracks"]
+
+
+class AlbumWriteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Album
+        fields = ["title", "release_year", "released_at"]
 
 
 class TrackWriteSerializer(serializers.ModelSerializer):

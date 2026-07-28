@@ -7,7 +7,8 @@ from .filters import TrackFilterSet
 from .models import Album, Track
 from .permissions import IsArtistOwner
 from .serializers import (
-    AlbumSerializer,
+    AlbumDetailSerializer,
+    AlbumListSerializer,
     AlbumWriteSerializer,
     StreamCreateSerializer,
     StreamSerializer,
@@ -20,12 +21,17 @@ class AlbumViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete"]
 
     def get_queryset(self):
-        return Album.objects.select_related("artist").prefetch_related("tracks")
+        queryset = Album.objects.select_related("artist")
+        if self.action != "list":
+            queryset = queryset.prefetch_related("tracks")
+        return queryset
 
     def get_serializer_class(self):
+        if self.action == "list":
+            return AlbumListSerializer
         if self.action in ("create", "update", "partial_update"):
             return AlbumWriteSerializer
-        return AlbumSerializer
+        return AlbumDetailSerializer
 
     def get_permissions(self):
         if self.action == "create":
@@ -41,7 +47,7 @@ class AlbumViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
-        output = AlbumSerializer(serializer.instance, context=self.get_serializer_context())
+        output = AlbumDetailSerializer(serializer.instance, context=self.get_serializer_context())
         return Response(output.data, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
@@ -50,7 +56,7 @@ class AlbumViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
-        output = AlbumSerializer(serializer.instance, context=self.get_serializer_context())
+        output = AlbumDetailSerializer(serializer.instance, context=self.get_serializer_context())
         return Response(output.data)
 
 
