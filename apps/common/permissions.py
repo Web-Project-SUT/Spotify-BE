@@ -67,3 +67,7 @@ class TierPermission(BasePermission):
 
 class IsSilverOrAbove(TierPermission):
     allowed_tiers = ("silver", "gold")
+
+
+class IsGold(TierPermission):
+    allowed_tiers = ("gold",)

@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand
@@ -6,8 +6,10 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.accounts.models import AccountStatus, ArtistProfile, Role, User, UserPreferences
-from apps.catalog.models import Album, Track
-from apps.subscriptions.models import Subscription, SubscriptionPlan, Tier
+from apps.catalog.models import Album, PlayEvent, Track
+from apps.catalog.services import record_stream
+from apps.reports.models import PayoutPolicy
+from apps.subscriptions.models import Subscription, SubscriptionPlan, Tier, Transaction
 
 
 class Command(BaseCommand):
@@ -50,8 +52,18 @@ class Command(BaseCommand):
             is_superuser=True,
         )
 
+        listener = User.objects.get(email="listener@demo.com")
+
         self._make_subscription(silver, silver_plan)
         self._make_subscription(gold, gold_plan)
+
+        PayoutPolicy.objects.get_or_create(
+            effective_from=date(2020, 1, 1),
+            defaults={
+                "per_stream_rate": Decimal("0.003"),
+                "per_listener_rate": Decimal("0.01"),
+            },
+        )
 
         for artist in (nova, echo):
             ArtistProfile.objects.get_or_create(
@@ -67,8 +79,10 @@ class Command(BaseCommand):
             defaults={"stage_name": pending_artist.display_name},
         )
 
-        self._seed_catalog(nova)
+        nova_tracks = self._seed_catalog(nova)
         self._seed_catalog(echo)
+
+        self._seed_streams(nova_tracks, [listener, silver, gold])
 
         self.stdout.write(self.style.SUCCESS("Demo data seeded."))
 
@@ -102,15 +116,30 @@ class Command(BaseCommand):
                 "expires_at": timezone.now() + timedelta(days=30),
             },
         )
+        Transaction.objects.get_or_create(
+            user=user,
+            plan=plan,
+            status=Transaction.Status.SUCCESS,
+            defaults={"amount": plan.monthly_price},
+        )
 
     def _seed_catalog(self, artist):
         album, _ = Album.objects.get_or_create(
             artist=artist, title=f"{artist.display_name} - Debut"
         )
+        tracks = []
         for i in range(1, 4):
-            Track.objects.get_or_create(
+            track, _ = Track.objects.get_or_create(
                 artist=artist,
                 album=album,
                 title=f"{artist.display_name} Track {i}",
                 defaults={"genre": "pop", "duration_ms": 180_000},
             )
+            tracks.append(track)
+        return tracks
+
+    def _seed_streams(self, tracks, listeners):
+        for track in tracks:
+            for listener in listeners:
+                if not PlayEvent.objects.filter(user=listener, track=track).exists():
+                    record_stream(user=listener, track=track)
