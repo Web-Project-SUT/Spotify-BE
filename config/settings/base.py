@@ -13,6 +13,7 @@ DEBUG = env.bool("DJANGO_DEBUG", default=False)
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=[])
 
 INSTALLED_APPS = [
+    'daphne',
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -29,6 +30,7 @@ INSTALLED_APPS = [
     "apps.catalog",
     "apps.playlists",
     "apps.subscriptions",
+    'channels',
 ]
 
 MIDDLEWARE = [
@@ -128,3 +130,12 @@ SIMPLE_JWT = {
 }
 
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=["http://localhost:3000"])
+
+ASGI_APPLICATION = 'config.asgi.application'
+
+# برای محیط توسعه از حافظه موقت برای مدیریت رویدادها استفاده می‌کنیم
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer"
+    }
+}

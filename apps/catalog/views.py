@@ -15,7 +15,9 @@ from .serializers import (
     TrackListSerializer,
     TrackWriteSerializer,
 )
-
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from apps.playlists.models import Playlist
 
 class AlbumViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete"]
@@ -114,3 +116,30 @@ class StreamCreateView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         event = serializer.save()
         return Response(StreamSerializer(event).data, status=status.HTTP_201_CREATED)
+
+
+class RecommendationAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        
+        # جستجو در مدل واسط (entries) برای پیدا کردن هنرمندان
+        user_playlists = Playlist.objects.filter(owner=user).prefetch_related('entries__track__artist')
+        liked_artists = set()
+        
+        for playlist in user_playlists:
+            for entry in playlist.entries.all():
+                if entry.track and entry.track.artist:
+                    liked_artists.add(entry.track.artist.id)
+        
+        # اگر کاربر سابقه داشت، آهنگ‌های همان هنرمندان را پیشنهاد بده
+        if liked_artists:
+            recommended_tracks = Track.objects.filter(artist_id__in=liked_artists).distinct()[:10]
+        # در غیر این صورت، جدیدترین آهنگ‌ها را برگردان
+        else:
+            recommended_tracks = Track.objects.all().order_by('-created_at')[:10]
+            
+        # استفاده از نام درست سریالایزر پروژه شما
+        serializer = TrackListSerializer(recommended_tracks, many=True)
+        return Response(serializer.data)
