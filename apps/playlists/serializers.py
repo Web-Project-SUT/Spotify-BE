@@ -1,6 +1,8 @@
+from django.conf import settings
 from rest_framework import serializers
 
 from apps.catalog.models import Track
+from apps.common.validators import AllowedExtension, MaxFileSize
 
 from .models import Playlist, PlaylistEntry
 
@@ -22,7 +24,7 @@ class PlaylistListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Playlist
-        fields = ["id", "owner", "title", "is_public", "created_at", "track_count"]
+        fields = ["id", "owner", "title", "is_public", "cover", "created_at", "track_count"]
 
     def get_track_count(self, obj) -> int:
         return obj.entries.count()
@@ -34,7 +36,7 @@ class PlaylistSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Playlist
-        fields = ["id", "owner", "title", "is_public", "created_at", "tracks"]
+        fields = ["id", "owner", "title", "is_public", "cover", "created_at", "tracks"]
         read_only_fields = ["id", "owner", "created_at", "tracks"]
 
 
@@ -50,3 +52,12 @@ class AddTrackSerializer(serializers.Serializer):
 
 class ReorderTracksSerializer(serializers.Serializer):
     order = serializers.ListField(child=serializers.UUIDField(), allow_empty=False)
+
+
+class PlaylistCoverUploadSerializer(serializers.Serializer):
+    cover = serializers.ImageField(
+        validators=[
+            MaxFileSize(settings.MEDIA_IMAGE_MAX_BYTES),
+            AllowedExtension(settings.MEDIA_IMAGE_EXTENSIONS),
+        ]
+    )

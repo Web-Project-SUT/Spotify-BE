@@ -3,7 +3,7 @@ from django.core.mail import send_mail
 from django.shortcuts import get_object_or_404
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -11,20 +11,27 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from apps.common.permissions import IsApprovedArtist, IsListenerOrArtist
+from apps.common.permissions import IsApprovedArtist, IsArtist, IsListenerOrArtist, IsSupportOrAdmin
+from apps.common.quotas import AvatarUploadQuota
+from apps.common.views import MediaResourceView
 
-from .models import AccountStatus, ArtistProfile, Follow, User
+from . import services
+from .models import AccountStatus, ArtistProfile, Follow, SampleWork, User
 from .serializers import (
     ArtistDetailSerializer,
     ArtistListSerializer,
     ArtistMeSerializer,
+    AvatarUploadSerializer,
     CustomTokenObtainPairSerializer,
     MeUpdateSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     RegisterArtistSerializer,
     RegisterListenerSerializer,
+    SampleWorkSerializer,
+    SampleWorkUploadSerializer,
     UserMeSerializer,
+    UserPreferencesSerializer,
     UserPublicSerializer,
 )
 
@@ -39,7 +46,7 @@ class RegisterListenerView(generics.CreateAPIView):
         user = serializer.save()
         refresh = CustomTokenObtainPairSerializer.get_token(user)
         data = {
-            "user": UserMeSerializer(user).data,
+            "user": UserMeSerializer(user, context=self.get_serializer_context()).data,
             "access": str(refresh.access_token),
             "refresh": str(refresh),
         }
@@ -54,7 +61,8 @@ class RegisterArtistView(generics.CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
-        return Response({"user": UserMeSerializer(user).data}, status=status.HTTP_201_CREATED)
+        data = {"user": UserMeSerializer(user, context=self.get_serializer_context()).data}
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class LoginView(TokenObtainPairView):
@@ -110,12 +118,26 @@ class MeView(generics.RetrieveUpdateDestroyAPIView):
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
-        return Response(UserMeSerializer(instance).data)
+        return Response(UserMeSerializer(instance, context=self.get_serializer_context()).data)
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         instance.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PreferencesView(generics.RetrieveUpdateAPIView):
+    # No role gate: every authenticated user (listener, artist, support,
+    # admin) has preferences. PUT is deliberately excluded (via
+    # http_method_names) — DRF's PUT requires every writable field, so a
+    # device sending its stale full view would silently revert fields another
+    # device changed since. PATCH gives free per-field merge instead.
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = UserPreferencesSerializer
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_object(self):
+        return services.get_preferences(self.request.user)
 
 
 class PasswordResetRequestView(APIView):
@@ -222,3 +244,68 @@ class FollowView(APIView):
         target = get_object_or_404(User, pk=pk)
         Follow.objects.filter(follower=request.user, following=target).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@extend_schema_view(
+    put=extend_schema(
+        request={"multipart/form-data": AvatarUploadSerializer}, responses={200: UserMeSerializer}
+    ),
+    delete=extend_schema(responses={204: None}),
+)
+class AvatarView(MediaResourceView):
+    permission_classes = [permissions.IsAuthenticated]
+    media_fields = ("avatar",)
+    upload_serializer_class = AvatarUploadSerializer
+    read_serializer_class = UserMeSerializer
+    quota_class = AvatarUploadQuota
+
+    def get_object(self):
+        return self.request.user
+
+
+class SampleWorkListCreateView(generics.ListCreateAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsArtist]
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return SampleWork.objects.none()
+        return SampleWork.objects.filter(artist=self.request.user.artist_profile)
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return SampleWorkUploadSerializer
+        return SampleWorkSerializer
+
+    @extend_schema(
+        request={"multipart/form-data": SampleWorkUploadSerializer},
+        responses={201: SampleWorkSerializer},
+    )
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        output = SampleWorkSerializer(serializer.instance, context=self.get_serializer_context())
+        return Response(output.data, status=status.HTTP_201_CREATED)
+
+
+class SampleWorkDeleteView(generics.DestroyAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsArtist]
+    serializer_class = SampleWorkSerializer
+
+    def get_queryset(self):
+        return SampleWork.objects.filter(artist=self.request.user.artist_profile)
+
+    def perform_destroy(self, instance):
+        if instance.file:
+            instance.file.delete(save=False)
+        instance.delete()
+
+
+class ArtistSampleWorkListView(generics.ListAPIView):
+    serializer_class = SampleWorkSerializer
+    permission_classes = [permissions.IsAuthenticated, IsSupportOrAdmin]
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return SampleWork.objects.none()
+        return SampleWork.objects.filter(artist_id=self.kwargs["pk"])

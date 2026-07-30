@@ -1,17 +1,29 @@
+import mimetypes
+
+from django.http import Http404
+from django.shortcuts import get_object_or_404
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, permissions, status, viewsets
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from apps.common.permissions import IsApprovedArtist
+from apps.common.http import range_file_response
+from apps.common.permissions import IsApprovedArtist, IsSilverOrAbove
+from apps.common.views import MediaResourceView
 
 from .filters import TrackFilterSet
 from .models import Album, Track
 from .permissions import IsArtistOwner
 from .serializers import (
+    AlbumCoverUploadSerializer,
     AlbumDetailSerializer,
     AlbumListSerializer,
     AlbumWriteSerializer,
     StreamCreateSerializer,
     StreamSerializer,
+    TrackAudioUploadSerializer,
+    TrackCoverUploadSerializer,
     TrackListSerializer,
     TrackWriteSerializer,
 )
@@ -118,6 +130,7 @@ class StreamCreateView(generics.CreateAPIView):
         return Response(StreamSerializer(event).data, status=status.HTTP_201_CREATED)
 
 
+
 class RecommendationAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -143,3 +156,65 @@ class RecommendationAPIView(APIView):
         # استفاده از نام درست سریالایزر پروژه شما
         serializer = TrackListSerializer(recommended_tracks, many=True)
         return Response(serializer.data)
+@extend_schema_view(
+    put=extend_schema(
+        request={"multipart/form-data": AlbumCoverUploadSerializer},
+        responses={200: AlbumDetailSerializer},
+    ),
+    delete=extend_schema(responses={204: None}),
+)
+class AlbumCoverView(MediaResourceView):
+    permission_classes = [permissions.IsAuthenticated, IsArtistOwner]
+    queryset = Album.objects.all()
+    media_fields = ("cover",)
+    upload_serializer_class = AlbumCoverUploadSerializer
+    read_serializer_class = AlbumDetailSerializer
+
+
+@extend_schema_view(
+    put=extend_schema(
+        request={"multipart/form-data": TrackCoverUploadSerializer},
+        responses={200: TrackListSerializer},
+    ),
+    delete=extend_schema(responses={204: None}),
+)
+class TrackCoverView(MediaResourceView):
+    permission_classes = [permissions.IsAuthenticated, IsArtistOwner]
+    queryset = Track.objects.all()
+    media_fields = ("cover",)
+    upload_serializer_class = TrackCoverUploadSerializer
+    read_serializer_class = TrackListSerializer
+
+
+@extend_schema_view(
+    put=extend_schema(
+        request={"multipart/form-data": TrackAudioUploadSerializer},
+        responses={200: TrackListSerializer},
+    ),
+    delete=extend_schema(responses={204: None}),
+)
+class TrackAudioView(MediaResourceView):
+    permission_classes = [permissions.IsAuthenticated, IsApprovedArtist, IsArtistOwner]
+    queryset = Track.objects.all()
+    media_fields = ("audio_high", "audio_low")
+    upload_serializer_class = TrackAudioUploadSerializer
+    read_serializer_class = TrackListSerializer
+
+
+class TrackDownloadView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsSilverOrAbove]
+
+    @extend_schema(request=None, responses={200: OpenApiTypes.BINARY})
+    def get(self, request, pk):
+        track = get_object_or_404(Track, pk=pk)
+        if not track.audio_high:
+            raise Http404
+        filename = track.audio_high.name.rsplit("/", 1)[-1]
+        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        return range_file_response(
+            track.audio_high,
+            content_type,
+            request=request,
+            as_attachment=True,
+            filename=filename,
+        )

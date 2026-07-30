@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 
-from .models import ArtistProfile, Follow, Notification, User, UserPreferences
+from .models import ArtistProfile, Follow, Notification, SampleWork, User, UserPreferences
 
 
 @admin.register(User)
@@ -65,10 +65,24 @@ class FollowAdmin(admin.ModelAdmin):
 
 @admin.register(UserPreferences)
 class UserPreferencesAdmin(admin.ModelAdmin):
-    list_display = ["user", "language", "volume"]
+    list_display = [
+        "user",
+        "language",
+        "notif_limit",
+        "volume",
+        "repeat_mode",
+        "shuffle",
+        "playback_quality",
+    ]
 
 
 @admin.register(Notification)
 class NotificationAdmin(admin.ModelAdmin):
     list_display = ["recipient", "type", "title", "is_read", "created_at"]
     list_filter = ["type", "is_read"]
+
+
+@admin.register(SampleWork)
+class SampleWorkAdmin(admin.ModelAdmin):
+    list_display = ["title", "artist", "created_at"]
+    search_fields = ["title", "artist__stage_name"]

@@ -1,19 +1,21 @@
 from django.db.models import F, Max
 from django.http import Http404
 from django.shortcuts import get_object_or_404
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.common.quotas import PlaylistQuota
+from apps.common.views import MediaResourceView
 
 from . import services
 from .models import Playlist
 from .permissions import IsPlaylistOwner
 from .serializers import (
     AddTrackSerializer,
+    PlaylistCoverUploadSerializer,
     PlaylistListSerializer,
     PlaylistSerializer,
     PlaylistTrackSerializer,
@@ -113,3 +115,18 @@ class PlaylistTrackDetailView(APIView):
         if not services.remove_track(playlist, track_id):
             raise Http404
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@extend_schema_view(
+    put=extend_schema(
+        request={"multipart/form-data": PlaylistCoverUploadSerializer},
+        responses={200: PlaylistSerializer},
+    ),
+    delete=extend_schema(responses={204: None}),
+)
+class PlaylistCoverView(MediaResourceView):
+    permission_classes = [permissions.IsAuthenticated, IsPlaylistOwner]
+    queryset = Playlist.objects.all()
+    media_fields = ("cover",)
+    upload_serializer_class = PlaylistCoverUploadSerializer
+    read_serializer_class = PlaylistSerializer

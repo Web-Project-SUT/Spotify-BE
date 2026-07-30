@@ -1,7 +1,7 @@
 import factory
 from factory.django import DjangoModelFactory
 
-from apps.accounts.models import AccountStatus, ArtistProfile, Role, User
+from apps.accounts.models import AccountStatus, ArtistProfile, Role, User, UserPreferences
 
 
 class UserFactory(DjangoModelFactory):
@@ -20,6 +20,14 @@ class UserFactory(DjangoModelFactory):
         obj.set_password(extracted or "password123")
         if create:
             obj.save()
+
+
+class UserPreferencesFactory(DjangoModelFactory):
+    class Meta:
+        model = UserPreferences
+        django_get_or_create = ("user",)
+
+    user = factory.SubFactory(UserFactory)
 
 
 class ArtistUserFactory(UserFactory):

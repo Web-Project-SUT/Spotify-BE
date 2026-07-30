@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     "apps.playlists",
     "apps.subscriptions",
     'channels',
+    "apps.reports",
 ]
 
 MIDDLEWARE = [
@@ -87,6 +88,12 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+MEDIA_IMAGE_MAX_BYTES = env.int("MEDIA_IMAGE_MAX_BYTES", default=5 * 1024 * 1024)
+MEDIA_AUDIO_MAX_BYTES = env.int("MEDIA_AUDIO_MAX_BYTES", default=50 * 1024 * 1024)
+MEDIA_IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"]
+MEDIA_AUDIO_EXTENSIONS = [".mp3", ".wav", ".flac"]
+FILE_UPLOAD_PERMISSIONS = 0o644
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

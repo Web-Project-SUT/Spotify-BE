@@ -16,4 +16,7 @@ class MediaCorsMiddleware:
         response = self.get_response(request)
         if request.path.startswith(f"/{settings.MEDIA_URL.strip('/')}/"):
             response["Access-Control-Allow-Origin"] = "*"
+            response["Accept-Ranges"] = "bytes"
+            response["Access-Control-Expose-Headers"] = "Content-Range, Accept-Ranges"
+            response["Cross-Origin-Resource-Policy"] = "cross-origin"
         return response

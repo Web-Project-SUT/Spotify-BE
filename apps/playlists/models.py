@@ -1,7 +1,12 @@
 from django.conf import settings
 from django.db import models
 
+from apps.common.media import upload_filename
 from apps.common.models import TimeStampedModel, UUIDModel
+
+
+def playlist_cover_path(instance, filename):
+    return f"covers/playlists/{instance.id}/{upload_filename(filename)}"
 
 
 class Playlist(UUIDModel, TimeStampedModel):
@@ -10,6 +15,7 @@ class Playlist(UUIDModel, TimeStampedModel):
     )
     title = models.CharField(max_length=120)
     is_public = models.BooleanField(default=False)
+    cover = models.ImageField(upload_to=playlist_cover_path, max_length=255, null=True, blank=True)
 
     class Meta:
         ordering = ["-created_at"]

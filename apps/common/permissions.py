@@ -49,3 +49,25 @@ class IsOwnerOrReadOnly(BasePermission):
         if request.method in SAFE_METHODS:
             return True
         return getattr(obj, self.owner_field, None) == request.user
+
+
+class TierPermission(BasePermission):
+    """Strategy base: subclasses declare which subscription tiers may pass."""
+
+    allowed_tiers: tuple[str, ...] = ()
+    message = "Your subscription tier does not allow this action."
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and request.user.tier in self.allowed_tiers
+        )
+
+
+class IsSilverOrAbove(TierPermission):
+    allowed_tiers = ("silver", "gold")
+
+
+class IsGold(TierPermission):
+    allowed_tiers = ("gold",)

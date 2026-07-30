@@ -43,3 +43,13 @@ next-env.d.ts
 *.tex
 *.md
 !README.md
+
+# backend
+media/
+.venv/
+__pycache__/
+*.pyc
+staticfiles/
+.pytest_cache/
+.ruff_cache/
+.coverage
