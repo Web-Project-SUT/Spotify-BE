@@ -7,6 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.openapi import Params, Responses, Tags, media_resource_schema
 from apps.common.quotas import PlaylistQuota
 from apps.common.views import MediaResourceView
 
@@ -24,6 +25,50 @@ from .serializers import (
 )
 
 
+@extend_schema_view(
+    list=extend_schema(
+        tags=[Tags.PLAYLISTS],
+        summary="List the current user's playlists",
+        parameters=[Params.PAGE, Params.PAGE_SIZE],
+    ),
+    retrieve=extend_schema(
+        tags=[Tags.PLAYLISTS],
+        summary="Get a playlist",
+        description=(
+            "A private playlist owned by someone else **403s, not 404s** — object-level "
+            "permissions run before the queryset would otherwise exclude it, so ownership is "
+            "never leaked as a false 404."
+        ),
+        responses={403: Responses.FORBIDDEN_403, 404: Responses.NOT_FOUND_404},
+    ),
+    create=extend_schema(
+        tags=[Tags.PLAYLISTS],
+        summary="Create a playlist",
+        description="Subject to the playlist quota: 6 (basic) / 100 (silver) / unlimited (gold).",
+        responses={
+            201: PlaylistSerializer,
+            400: Responses.VALIDATION_400,
+            403: Responses.QUOTA_403,
+        },
+    ),
+    partial_update=extend_schema(
+        tags=[Tags.PLAYLISTS],
+        summary="Update a playlist",
+        description="Playlist owner only.",
+        responses={
+            200: PlaylistSerializer,
+            400: Responses.VALIDATION_400,
+            403: Responses.FORBIDDEN_403,
+            404: Responses.NOT_FOUND_404,
+        },
+    ),
+    destroy=extend_schema(
+        tags=[Tags.PLAYLISTS],
+        summary="Delete a playlist",
+        description="Playlist owner only.",
+        responses={403: Responses.FORBIDDEN_403, 404: Responses.NOT_FOUND_404},
+    ),
+)
 class PlaylistViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete"]
     permission_classes = [permissions.IsAuthenticated]
@@ -70,6 +115,13 @@ class PlaylistViewSet(viewsets.ModelViewSet):
         output = PlaylistSerializer(serializer.instance, context=self.get_serializer_context())
         return Response(output.data)
 
+    @extend_schema(
+        tags=[Tags.PLAYLISTS],
+        summary="List the current user's playlists by last-played",
+        description="Powers the home page's \"last listened-to playlists\" row.",
+        parameters=[Params.PAGE, Params.PAGE_SIZE],
+        responses={200: PlaylistListSerializer(many=True)},
+    )
     @action(detail=False, methods=["get"], url_path="recent")
     def recent(self, request):
         queryset = (
@@ -88,7 +140,12 @@ class PlaylistTracksView(APIView):
     def get_playlist(self, playlist_id):
         return get_object_or_404(Playlist, pk=playlist_id, owner=self.request.user)
 
-    @extend_schema(request=AddTrackSerializer, responses={201: PlaylistTrackSerializer})
+    @extend_schema(
+        tags=[Tags.PLAYLISTS],
+        summary="Add a track to a playlist",
+        request=AddTrackSerializer,
+        responses={201: PlaylistTrackSerializer, 400: Responses.VALIDATION_400},
+    )
     def post(self, request, playlist_id):
         playlist = self.get_playlist(playlist_id)
         serializer = AddTrackSerializer(data=request.data)
@@ -96,7 +153,16 @@ class PlaylistTracksView(APIView):
         entry = services.add_track(playlist, serializer.validated_data["track"])
         return Response(PlaylistTrackSerializer(entry).data, status=status.HTTP_201_CREATED)
 
-    @extend_schema(request=ReorderTracksSerializer, responses={200: PlaylistSerializer})
+    @extend_schema(
+        tags=[Tags.PLAYLISTS],
+        summary="Reorder a playlist's tracks",
+        description=(
+            "`order` must be the **complete** list of track ids in their new order — a partial "
+            "list is rejected."
+        ),
+        request=ReorderTracksSerializer,
+        responses={200: PlaylistSerializer, 400: Responses.VALIDATION_400},
+    )
     def put(self, request, playlist_id):
         playlist = self.get_playlist(playlist_id)
         serializer = ReorderTracksSerializer(data=request.data)
@@ -109,7 +175,11 @@ class PlaylistTracksView(APIView):
 class PlaylistTrackDetailView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    @extend_schema(responses={204: None})
+    @extend_schema(
+        tags=[Tags.PLAYLISTS],
+        summary="Remove a track from a playlist",
+        responses={204: None, 404: Responses.NOT_FOUND_404},
+    )
     def delete(self, request, playlist_id, track_id):
         playlist = get_object_or_404(Playlist, pk=playlist_id, owner=request.user)
         if not services.remove_track(playlist, track_id):
@@ -117,12 +187,11 @@ class PlaylistTrackDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-@extend_schema_view(
-    put=extend_schema(
-        request={"multipart/form-data": PlaylistCoverUploadSerializer},
-        responses={200: PlaylistSerializer},
-    ),
-    delete=extend_schema(responses={204: None}),
+@media_resource_schema(
+    PlaylistSerializer,
+    PlaylistCoverUploadSerializer,
+    summary_noun="playlist cover",
+    tags=[Tags.PLAYLISTS],
 )
 class PlaylistCoverView(MediaResourceView):
     permission_classes = [permissions.IsAuthenticated, IsPlaylistOwner]
