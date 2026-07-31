@@ -5,9 +5,11 @@ from .services import parse_period
 
 
 class ArtistPayoutFilterSet(filters.FilterSet):
-    period = filters.CharFilter(method="filter_period")
-    status = filters.ChoiceFilter(choices=ArtistPayout.Status.choices)
-    artist = filters.UUIDFilter(field_name="artist_id")
+    period = filters.CharFilter(method="filter_period", help_text="Payout month, `YYYY-MM`.")
+    status = filters.ChoiceFilter(
+        choices=ArtistPayout.Status.choices, help_text="`pending` or `paid`."
+    )
+    artist = filters.UUIDFilter(field_name="artist_id", help_text="Artist user id.")
 
     class Meta:
         model = ArtistPayout
