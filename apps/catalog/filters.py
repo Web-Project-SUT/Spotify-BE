@@ -5,9 +5,14 @@ from .models import Track
 
 
 class TrackFilterSet(filters.FilterSet):
-    genre = filters.CharFilter(lookup_expr="iexact")
-    artist = filters.UUIDFilter(field_name="artist_id")
-    earlyAccess = filters.BooleanFilter(method="filter_early_access")
+    genre = filters.CharFilter(
+        lookup_expr="iexact", help_text="Exact genre match, case-insensitive."
+    )
+    artist = filters.UUIDFilter(field_name="artist_id", help_text="Artist user id.")
+    earlyAccess = filters.BooleanFilter(
+        method="filter_early_access",
+        help_text="If true, only tracks still within their early-access window.",
+    )
 
     class Meta:
         model = Track

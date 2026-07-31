@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.common.http import range_file_response
+from apps.common.openapi import Params, Responses, Tags, media_resource_schema
 from apps.common.permissions import IsApprovedArtist, IsSilverOrAbove
 from apps.common.views import MediaResourceView
 
@@ -31,6 +32,41 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from apps.playlists.models import Playlist
 
+@extend_schema_view(
+    list=extend_schema(
+        tags=[Tags.ALBUMS], summary="List albums", parameters=[Params.PAGE, Params.PAGE_SIZE]
+    ),
+    retrieve=extend_schema(
+        tags=[Tags.ALBUMS], summary="Get an album", responses={404: Responses.NOT_FOUND_404}
+    ),
+    create=extend_schema(
+        tags=[Tags.ALBUMS],
+        summary="Create an album",
+        description="Approved artists only.",
+        responses={
+            201: AlbumDetailSerializer,
+            400: Responses.VALIDATION_400,
+            403: Responses.FORBIDDEN_403,
+        },
+    ),
+    partial_update=extend_schema(
+        tags=[Tags.ALBUMS],
+        summary="Update an album",
+        description="Album owner only.",
+        responses={
+            200: AlbumDetailSerializer,
+            400: Responses.VALIDATION_400,
+            403: Responses.FORBIDDEN_403,
+            404: Responses.NOT_FOUND_404,
+        },
+    ),
+    destroy=extend_schema(
+        tags=[Tags.ALBUMS],
+        summary="Delete an album",
+        description="Album owner only.",
+        responses={403: Responses.FORBIDDEN_403, 404: Responses.NOT_FOUND_404},
+    ),
+)
 class AlbumViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete"]
 
@@ -74,6 +110,52 @@ class AlbumViewSet(viewsets.ModelViewSet):
         return Response(output.data)
 
 
+@extend_schema_view(
+    list=extend_schema(
+        tags=[Tags.TRACKS],
+        summary="List/search/sort tracks",
+        description=(
+            "`?search` matches track title or artist stage name. `?genre` and `?artist` (UUID) "
+            "filter exactly. `?earlyAccess=true` restricts to tracks still within their "
+            "early-access window (`doc.tex` §2.9's Gold-only home page section)."
+        ),
+        parameters=[
+            Params.ORDERING("playCount", "-playCount", "releasedAt", "-releasedAt"),
+            Params.PAGE,
+            Params.PAGE_SIZE,
+        ],
+    ),
+    retrieve=extend_schema(
+        tags=[Tags.TRACKS], summary="Get a track", responses={404: Responses.NOT_FOUND_404}
+    ),
+    create=extend_schema(
+        tags=[Tags.TRACKS],
+        summary="Create a track",
+        description="Approved artists only.",
+        responses={
+            201: TrackListSerializer,
+            400: Responses.VALIDATION_400,
+            403: Responses.FORBIDDEN_403,
+        },
+    ),
+    partial_update=extend_schema(
+        tags=[Tags.TRACKS],
+        summary="Update a track",
+        description="Track owner only.",
+        responses={
+            200: TrackListSerializer,
+            400: Responses.VALIDATION_400,
+            403: Responses.FORBIDDEN_403,
+            404: Responses.NOT_FOUND_404,
+        },
+    ),
+    destroy=extend_schema(
+        tags=[Tags.TRACKS],
+        summary="Delete a track",
+        description="Track owner only.",
+        responses={403: Responses.FORBIDDEN_403, 404: Responses.NOT_FOUND_404},
+    ),
+)
 class TrackViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete"]
     filterset_class = TrackFilterSet
@@ -119,6 +201,17 @@ class TrackViewSet(viewsets.ModelViewSet):
         return Response(output.data)
 
 
+@extend_schema_view(
+    post=extend_schema(
+        tags=[Tags.STREAMING],
+        summary="Record a play event",
+        description=(
+            "Called by the player on playback start; `playlist` is optional context for the "
+            "`?recent` ordering."
+        ),
+        responses={201: StreamSerializer, 400: Responses.VALIDATION_400},
+    )
+)
 class StreamCreateView(generics.CreateAPIView):
     serializer_class = StreamCreateSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -134,6 +227,17 @@ class StreamCreateView(generics.CreateAPIView):
 class RecommendationAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=[Tags.RECOMMENDATIONS],
+        summary="Get personalized track recommendations",
+        description=(
+            "Looks at the artists behind tracks already in the user's playlists; if that set "
+            "is non-empty, returns up to 10 other tracks by those artists, else falls back to "
+            "the 10 newest tracks platform-wide. **Unlike every other list endpoint, this one "
+            "is unpaginated and hard-capped at 10** — there is no `?page`/`?pageSize`."
+        ),
+        responses={200: TrackListSerializer(many=True)},
+    )
     def get(self, request):
         user = request.user
         
@@ -156,12 +260,11 @@ class RecommendationAPIView(APIView):
         # استفاده از نام درست سریالایزر پروژه شما
         serializer = TrackListSerializer(recommended_tracks, many=True)
         return Response(serializer.data)
-@extend_schema_view(
-    put=extend_schema(
-        request={"multipart/form-data": AlbumCoverUploadSerializer},
-        responses={200: AlbumDetailSerializer},
-    ),
-    delete=extend_schema(responses={204: None}),
+@media_resource_schema(
+    AlbumDetailSerializer,
+    AlbumCoverUploadSerializer,
+    summary_noun="album cover",
+    tags=[Tags.ALBUMS],
 )
 class AlbumCoverView(MediaResourceView):
     permission_classes = [permissions.IsAuthenticated, IsArtistOwner]
@@ -171,12 +274,8 @@ class AlbumCoverView(MediaResourceView):
     read_serializer_class = AlbumDetailSerializer
 
 
-@extend_schema_view(
-    put=extend_schema(
-        request={"multipart/form-data": TrackCoverUploadSerializer},
-        responses={200: TrackListSerializer},
-    ),
-    delete=extend_schema(responses={204: None}),
+@media_resource_schema(
+    TrackListSerializer, TrackCoverUploadSerializer, summary_noun="track cover", tags=[Tags.TRACKS]
 )
 class TrackCoverView(MediaResourceView):
     permission_classes = [permissions.IsAuthenticated, IsArtistOwner]
@@ -186,14 +285,19 @@ class TrackCoverView(MediaResourceView):
     read_serializer_class = TrackListSerializer
 
 
-@extend_schema_view(
-    put=extend_schema(
-        request={"multipart/form-data": TrackAudioUploadSerializer},
-        responses={200: TrackListSerializer},
-    ),
-    delete=extend_schema(responses={204: None}),
+@media_resource_schema(
+    TrackListSerializer,
+    TrackAudioUploadSerializer,
+    summary_noun="track audio",
+    tags=[Tags.TRACKS],
 )
 class TrackAudioView(MediaResourceView):
+    """`audioHigh` and `audioLow` are both required in the one multipart request — the player's
+    quality switch (`doc.tex` §5.1) needs both bitrates present from the start. Content is
+    verified by magic-byte sniffing (`apps.common.validators.AudioSignature`), not the
+    client-supplied `Content-Type`, which is trivially spoofed.
+    """
+
     permission_classes = [permissions.IsAuthenticated, IsApprovedArtist, IsArtistOwner]
     queryset = Track.objects.all()
     media_fields = ("audio_high", "audio_low")
@@ -204,7 +308,20 @@ class TrackAudioView(MediaResourceView):
 class TrackDownloadView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsSilverOrAbove]
 
-    @extend_schema(request=None, responses={200: OpenApiTypes.BINARY})
+    @extend_schema(
+        tags=[Tags.STREAMING],
+        summary="Download a track's high-quality audio",
+        description=(
+            "Silver/Gold tiers only (`doc.tex` §1). Supports HTTP `Range` requests, so a client "
+            "resuming a partial download gets `206 Partial Content` instead of restarting."
+        ),
+        request=None,
+        responses={
+            200: OpenApiTypes.BINARY,
+            403: Responses.FORBIDDEN_403,
+            404: Responses.NOT_FOUND_404,
+        },
+    )
     def get(self, request, pk):
         track = get_object_or_404(Track, pk=pk)
         if not track.audio_high:
