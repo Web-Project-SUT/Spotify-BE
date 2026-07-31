@@ -1,11 +1,15 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework import status
+from rest_framework import serializers, status
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
 from datetime import timedelta
+
+from drf_spectacular.utils import OpenApiResponse, extend_schema, inline_serializer
+
+from apps.common.openapi import Params, Tags
 
 from .models import SubscriptionPlan, Transaction, Subscription
 from .services import initiate_payment, verify_payment
@@ -13,6 +17,29 @@ from .services import initiate_payment, verify_payment
 class PaymentStartView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=[Tags.PAYMENTS],
+        summary="Start a subscription payment",
+        description=(
+            "Creates a pending `Transaction` and returns a Zarinpal `payment_url` to redirect "
+            "the user to. Note the request field is `planId` — `CamelCaseJSONParser` un-"
+            "camelizes the body before the view reads `request.data.get(\"plan_id\")`."
+        ),
+        request=inline_serializer(
+            "PaymentStartRequest", fields={"plan_id": serializers.UUIDField()}
+        ),
+        responses={
+            200: inline_serializer(
+                "PaymentStartResponse", fields={"payment_url": serializers.URLField()}
+            ),
+            500: OpenApiResponse(
+                response=inline_serializer(
+                    "PaymentGatewayError", fields={"error": serializers.CharField()}
+                ),
+                description="The payment gateway could not be reached or rejected the request.",
+            ),
+        },
+    )
     def post(self, request):
         plan_id = request.data.get("plan_id")
         plan = get_object_or_404(SubscriptionPlan, id=plan_id)
@@ -31,6 +58,31 @@ class PaymentStartView(APIView):
         return Response({"error": "Payment gateway error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class PaymentCallbackView(APIView):
+    @extend_schema(
+        tags=[Tags.PAYMENTS],
+        summary="Zarinpal payment callback",
+        description=(
+            "The gateway redirects the user's browser here with no `Authorization` header, yet "
+            "this view has no `permission_classes` of its own and so inherits the global "
+            "`IsAuthenticated` default — as written, this callback cannot succeed for a real "
+            "gateway redirect (see PR write-up). Transaction lifecycle: `pending` -> `success` "
+            "on a verified callback, `pending` -> `failed` otherwise."
+        ),
+        parameters=[Params.ZARINPAL_AUTHORITY, Params.ZARINPAL_STATUS],
+        request=None,
+        responses={
+            200: inline_serializer(
+                "PaymentCallbackResponse",
+                fields={"message": serializers.CharField(), "ref_id": serializers.CharField()},
+            ),
+            400: OpenApiResponse(
+                response=inline_serializer(
+                    "PaymentCallbackError", fields={"error": serializers.CharField()}
+                ),
+                description="Payment was cancelled, failed, or verification failed.",
+            ),
+        },
+    )
     def get(self, request):
         authority = request.GET.get("Authority")
         payment_status = request.GET.get("Status")
