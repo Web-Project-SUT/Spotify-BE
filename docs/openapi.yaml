@@ -1,0 +1,4689 @@
+openapi: 3.0.3
+info:
+  title: Spotify Clone API
+  version: 1.0.0
+  description: |2
+
+    Spotify-clone REST API — a music streaming platform with four roles (**listener**, **artist**,
+    **support**, **admin**) and three listener subscription tiers (**basic**, **silver**, **gold**).
+
+    ### Roles & tiers
+
+    | Feature | Basic (Free) | Silver | Gold |
+    |---|---|---|---|
+    | Daily stream limit | 60 | unlimited | unlimited |
+    | Playlist limit | 6 | 100 | unlimited |
+    | Profile picture upload | No | Yes | Yes |
+    | Track download | No | Yes | Yes |
+    | Early access to new tracks | No | No | Yes |
+    | Song/listener statistics | No | No | Yes |
+
+    `role` is fixed at registration/approval and travels on the JWT. **Tier is deliberately not on the
+    JWT** — it is computed live from the user's active `Subscription` (`User.tier`), because tier can
+    change the instant a payment completes and a stale JWT claim would misrepresent access until the
+    token expires. Call `GET /api/auth/me/` for the current tier; don't infer it from the token.
+
+    ### Authentication
+
+    1. `POST /api/auth/login/` (or `/api/auth/register/listener/`, which also logs in) returns
+       `{user, access, refresh}`.
+    2. Send `Authorization: Bearer <access>` on every subsequent request — use "Authorize" above.
+    3. `access` expires in 30 minutes. `POST /api/auth/refresh/` with the current `refresh` **rotates
+       and blacklists** it — store the *new* `refresh` from the response, or the next refresh call 401s.
+
+    `POST /api/auth/register/artist/` does **not** return tokens — the account is `pending` until a
+    support/admin user approves it.
+
+    ### Conventions
+
+    - **camelCase over the wire, snake_case in Python.** Request/response bodies are camelCase
+      (`djangorestframework-camel-case`); query params are camelCase only where a view explicitly
+      says so (e.g. `?earlyAccess`, `?ordering=-playCount`).
+    - **Errors** are always `{"detail": string, "code": string, "fields": object|null}` — `fields` is
+      populated only for field-level validation errors.
+    - **Pagination**: `?page` / `?pageSize` (max 100).
+    - **Media URLs** (`avatar`, album/track/playlist `cover`, `audioHigh`/`audioLow`) are
+      unauthenticated capability URLs — the path contains a random, unguessable suffix rather than a
+      signed/expiring token, because `<img src>`/`<audio src>` can't send an `Authorization` header.
+      `GET /api/tracks/{id}/download/` is the one endpoint with a real tier check (silver/gold) on
+      top of that, and both media serving and downloads support HTTP Range (`206 Partial Content`).
+
+    ### Demo accounts (all `password123`)
+
+    `listener@demo.com` (basic) · `silver@demo.com` · `gold@demo.com` · `nova@demo.com` /
+    `echo@demo.com` (approved artists) · `pending-artist@demo.com` (awaiting approval) ·
+    `support@demo.com` · `admin@demo.com`.
+
+    ### Realtime (WebSocket) — group listening
+
+    `ws://<host>/ws/session/{sessionId}/` (`GroupSessionConsumer`) is **outside this OpenAPI schema** —
+    OpenAPI 3.0 has no way to describe WebSockets. The socket is session/cookie-authenticated (Django's
+    `AuthMiddlewareStack`), **not** the JWT bearer token the REST API above uses, since a browser's
+    WebSocket handshake carries cookies, not custom headers. Once connected, every client in the group
+    sends and receives the same frame shape:
+
+    ```json
+    {"action": "play" | "pause" | "seek", "progress": <seconds>}
+    ```
+
+    The server rebroadcasts each frame to the rest of the group unchanged — there is no server-side
+    validation of `action`'s value or `progress`'s type/range today.
+  contact:
+    name: Spotify Clone API
+  license:
+    name: MIT
+paths:
+  /api/albums/:
+    get:
+      operationId: albums_list
+      summary: List albums
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - in: query
+        name: page
+        schema:
+          type: integer
+        description: 1-indexed page number.
+      - in: query
+        name: pageSize
+        schema:
+          type: integer
+        description: Items per page, max 100.
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - Albums
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedAlbumListList'
+          description: ''
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: albums_create
+      description: Approved artists only.
+      summary: Create an album
+      tags:
+      - Albums
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlbumWriteRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AlbumWriteRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlbumDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                PermissionDenied:
+                  value:
+                    detail: You do not have permission to perform this action.
+                    code: permission_denied
+                    fields: null
+                  summary: permission_denied
+          description: Authenticated, but not permitted to perform this action.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/albums/{id}/:
+    get:
+      operationId: albums_retrieve
+      summary: Get an album
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this album.
+        required: true
+      tags:
+      - Albums
+      security:
+      - jwtAuth: []
+      responses:
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                NotFound:
+                  value:
+                    detail: Not found.
+                    code: not_found
+                    fields: null
+                  summary: not_found
+          description: No resource exists at this path.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      operationId: albums_partial_update
+      description: Album owner only.
+      summary: Update an album
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this album.
+        required: true
+      tags:
+      - Albums
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedAlbumWriteRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedAlbumWriteRequest'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlbumDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                PermissionDenied:
+                  value:
+                    detail: You do not have permission to perform this action.
+                    code: permission_denied
+                    fields: null
+                  summary: permission_denied
+          description: Authenticated, but not permitted to perform this action.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                NotFound:
+                  value:
+                    detail: Not found.
+                    code: not_found
+                    fields: null
+                  summary: not_found
+          description: No resource exists at this path.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      operationId: albums_destroy
+      description: Album owner only.
+      summary: Delete an album
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this album.
+        required: true
+      tags:
+      - Albums
+      security:
+      - jwtAuth: []
+      responses:
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                PermissionDenied:
+                  value:
+                    detail: You do not have permission to perform this action.
+                    code: permission_denied
+                    fields: null
+                  summary: permission_denied
+          description: Authenticated, but not permitted to perform this action.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                NotFound:
+                  value:
+                    detail: Not found.
+                    code: not_found
+                    fields: null
+                  summary: not_found
+          description: No resource exists at this path.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/albums/{id}/cover/:
+    put:
+      operationId: albums_cover_update
+      description: A singleton binary sub-resource. PUT replaces it, DELETE clears
+        it.
+      summary: Replace the album cover
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Albums
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AlbumCoverUploadRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlbumDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No resource exists at this path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      operationId: albums_cover_destroy
+      description: A singleton binary sub-resource. PUT replaces it, DELETE clears
+        it.
+      summary: Remove the album cover
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Albums
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No resource exists at this path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/artists/:
+    get:
+      operationId: artists_list
+      description: Only artists whose account `status` is `active` (approved) appear
+        here.
+      summary: List approved artists
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: pageSize
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - Artists
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedArtistListList'
+          description: ''
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/artists/{id}/:
+    get:
+      operationId: artists_retrieve
+      summary: Get an artist's public profile
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Artists
+      security:
+      - jwtAuth: []
+      responses:
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                NotFound:
+                  value:
+                    detail: Not found.
+                    code: not_found
+                    fields: null
+                  summary: not_found
+          description: No resource exists at this path.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/artists/{id}/sample-works/:
+    get:
+      operationId: artists_sample_works_list
+      description: Support/admin only — used during artist approval review.
+      summary: List an artist's sample works
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: pageSize
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - Artists
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedSampleWorkList'
+          description: ''
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No resource exists at this path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/artists/me/:
+    put:
+      operationId: artists_me_update
+      summary: Update the current artist's profile
+      tags:
+      - Artists
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArtistMeRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ArtistMeRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtistMe'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      operationId: artists_me_partial_update
+      summary: Partially update the current artist's profile
+      tags:
+      - Artists
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedArtistMeRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedArtistMeRequest'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtistMe'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/artists/me/sample-works/:
+    get:
+      operationId: artists_me_sample_works_list
+      summary: List the current artist's sample works
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: pageSize
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - Artists
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedSampleWorkList'
+          description: ''
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: artists_me_sample_works_create
+      tags:
+      - artists
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SampleWorkUploadRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SampleWorkUploadRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SampleWorkUpload'
+          description: ''
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400':
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/artists/me/sample-works/{id}/:
+    delete:
+      operationId: artists_me_sample_works_destroy
+      summary: Delete a sample work
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Artists
+      security:
+      - jwtAuth: []
+      responses:
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                NotFound:
+                  value:
+                    detail: Not found.
+                    code: not_found
+                    fields: null
+                  summary: not_found
+          description: No resource exists at this path.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/auth/login/:
+    post:
+      operationId: auth_login_create
+      description: |-
+        Takes a set of user credentials and returns an access and refresh JSON web
+        token pair to prove the authentication of those credentials.
+      summary: Log in
+      tags:
+      - Auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomTokenObtainPairRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CustomTokenObtainPairRequest'
+        required: true
+      responses:
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+  /api/auth/logout/:
+    post:
+      operationId: auth_logout_create
+      description: Blacklists the given `refresh` token so it can't obtain new access
+        tokens.
+      summary: Log out
+      tags:
+      - Auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh:
+                  type: string
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/auth/me/:
+    get:
+      operationId: auth_me_retrieve
+      summary: Get the current user
+      tags:
+      - Account
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserMe'
+          description: ''
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      operationId: auth_me_update
+      description: '**Known quirk:** `update()` forces `partial=True` internally,
+        so this behaves identically to PATCH — omitted fields are left unchanged rather
+        than rejected as missing.'
+      summary: Update the current user
+      tags:
+      - Account
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MeUpdateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MeUpdateRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserMe'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      operationId: auth_me_partial_update
+      summary: Partially update the current user
+      tags:
+      - Account
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedMeUpdateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedMeUpdateRequest'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserMe'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      operationId: auth_me_destroy
+      summary: Delete the current user's account
+      tags:
+      - Account
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/auth/me/avatar/:
+    put:
+      operationId: auth_me_avatar_update
+      description: A singleton binary sub-resource. PUT replaces it, DELETE clears
+        it.
+      summary: Replace the avatar
+      tags:
+      - Account
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AvatarUploadRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserMe'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                QuotaExceeded:
+                  value:
+                    detail: Limit of 6 reached for your subscription tier.
+                    code: quota_exceeded
+                    fields: null
+                  summary: quota_exceeded
+                FileTooLarge:
+                  value:
+                    detail: File exceeds the maximum allowed size.
+                    code: file_too_large
+                    fields: null
+                  summary: file_too_large
+                UnsupportedFileType:
+                  value:
+                    detail: Unsupported file type.
+                    code: unsupported_file_type
+                    fields: null
+                  summary: unsupported_file_type
+          description: The user's subscription tier has hit a quota limit.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      operationId: auth_me_avatar_destroy
+      description: A singleton binary sub-resource. PUT replaces it, DELETE clears
+        it.
+      summary: Remove the avatar
+      tags:
+      - Account
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/auth/me/preferences/:
+    get:
+      operationId: auth_me_preferences_retrieve
+      description: 'Preferences sync across every device the user logs into. camelCase
+        fields: `language` (`en`/`fa`/`es`), `notifLimit`, `volume` (0-100), `repeatMode`
+        (`off`/`all`/`one`), `shuffle`, `playbackQuality` (`high`/`low`).'
+      summary: Get the current user's preferences
+      tags:
+      - Account
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPreferences'
+          description: ''
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      operationId: auth_me_preferences_partial_update
+      description: PATCH-only by design — PUT would require every field in one request,
+        so a device sending its stale full view could silently revert fields another
+        device changed since.
+      summary: Update the current user's preferences
+      tags:
+      - Account
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedUserPreferencesRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedUserPreferencesRequest'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPreferences'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/auth/password-reset/:
+    post:
+      operationId: auth_password_reset_create
+      description: Always returns 204 whether or not the email matches an account,
+        to avoid leaking which emails are registered.
+      summary: Request a password reset email
+      tags:
+      - Auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequestRequest'
+        required: true
+      responses:
+        '204':
+          description: No response body
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+  /api/auth/password-reset/confirm/:
+    post:
+      operationId: auth_password_reset_confirm_create
+      summary: Confirm a password reset
+      tags:
+      - Auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirmRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirmRequest'
+        required: true
+      responses:
+        '204':
+          description: No response body
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+  /api/auth/refresh/:
+    post:
+      operationId: auth_refresh_create
+      description: 'Exchanges a `refresh` token for a new `access` token. `ROTATE_REFRESH_TOKENS`
+        and `BLACKLIST_AFTER_ROTATION` are both on: the response also carries a **new**
+        `refresh` token and the one just used is blacklisted. Callers must persist
+        the rotated `refresh` — retrying with the old one 401s.'
+      summary: Refresh the access token
+      tags:
+      - Auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+        required: true
+      responses:
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+  /api/auth/register/artist/:
+    post:
+      operationId: auth_register_artist_create
+      description: Creates an `artist` account **pending** support/admin approval.
+        Unlike listener registration, no tokens are returned — the account cannot
+        log in until approved.
+      summary: Register an artist
+      tags:
+      - Auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterArtistRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RegisterArtistRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterArtistResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+  /api/auth/register/listener/:
+    post:
+      operationId: auth_register_listener_create
+      description: Creates a `listener` account and logs it in immediately.
+      summary: Register a listener
+      tags:
+      - Auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterListenerRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RegisterListenerRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterListenerResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+  /api/playlists/:
+    get:
+      operationId: playlists_list
+      summary: List the current user's playlists
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - in: query
+        name: page
+        schema:
+          type: integer
+        description: 1-indexed page number.
+      - in: query
+        name: pageSize
+        schema:
+          type: integer
+        description: Items per page, max 100.
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - Playlists
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedPlaylistListList'
+          description: ''
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: playlists_create
+      description: 'Subject to the playlist quota: 6 (basic) / 100 (silver) / unlimited
+        (gold).'
+      summary: Create a playlist
+      tags:
+      - Playlists
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaylistWriteRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PlaylistWriteRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Playlist'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                QuotaExceeded:
+                  value:
+                    detail: Limit of 6 reached for your subscription tier.
+                    code: quota_exceeded
+                    fields: null
+                  summary: quota_exceeded
+                FileTooLarge:
+                  value:
+                    detail: File exceeds the maximum allowed size.
+                    code: file_too_large
+                    fields: null
+                  summary: file_too_large
+                UnsupportedFileType:
+                  value:
+                    detail: Unsupported file type.
+                    code: unsupported_file_type
+                    fields: null
+                  summary: unsupported_file_type
+          description: The user's subscription tier has hit a quota limit.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/playlists/{id}/:
+    get:
+      operationId: playlists_retrieve
+      description: A private playlist owned by someone else **403s, not 404s** — object-level
+        permissions run before the queryset would otherwise exclude it, so ownership
+        is never leaked as a false 404.
+      summary: Get a playlist
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this playlist.
+        required: true
+      tags:
+      - Playlists
+      security:
+      - jwtAuth: []
+      responses:
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                PermissionDenied:
+                  value:
+                    detail: You do not have permission to perform this action.
+                    code: permission_denied
+                    fields: null
+                  summary: permission_denied
+          description: Authenticated, but not permitted to perform this action.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                NotFound:
+                  value:
+                    detail: Not found.
+                    code: not_found
+                    fields: null
+                  summary: not_found
+          description: No resource exists at this path.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      operationId: playlists_partial_update
+      description: Playlist owner only.
+      summary: Update a playlist
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this playlist.
+        required: true
+      tags:
+      - Playlists
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedPlaylistWriteRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedPlaylistWriteRequest'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Playlist'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                PermissionDenied:
+                  value:
+                    detail: You do not have permission to perform this action.
+                    code: permission_denied
+                    fields: null
+                  summary: permission_denied
+          description: Authenticated, but not permitted to perform this action.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                NotFound:
+                  value:
+                    detail: Not found.
+                    code: not_found
+                    fields: null
+                  summary: not_found
+          description: No resource exists at this path.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      operationId: playlists_destroy
+      description: Playlist owner only.
+      summary: Delete a playlist
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this playlist.
+        required: true
+      tags:
+      - Playlists
+      security:
+      - jwtAuth: []
+      responses:
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                PermissionDenied:
+                  value:
+                    detail: You do not have permission to perform this action.
+                    code: permission_denied
+                    fields: null
+                  summary: permission_denied
+          description: Authenticated, but not permitted to perform this action.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                NotFound:
+                  value:
+                    detail: Not found.
+                    code: not_found
+                    fields: null
+                  summary: not_found
+          description: No resource exists at this path.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/playlists/{id}/cover/:
+    put:
+      operationId: playlists_cover_update
+      description: A singleton binary sub-resource. PUT replaces it, DELETE clears
+        it.
+      summary: Replace the playlist cover
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Playlists
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PlaylistCoverUploadRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Playlist'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No resource exists at this path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      operationId: playlists_cover_destroy
+      description: A singleton binary sub-resource. PUT replaces it, DELETE clears
+        it.
+      summary: Remove the playlist cover
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Playlists
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No resource exists at this path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/playlists/{playlist_id}/tracks/:
+    post:
+      operationId: playlists_tracks_create
+      summary: Add a track to a playlist
+      parameters:
+      - in: path
+        name: playlist_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Playlists
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddTrackRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AddTrackRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaylistTrack'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No resource exists at this path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      operationId: playlists_tracks_update
+      description: '`order` must be the **complete** list of track ids in their new
+        order — a partial list is rejected.'
+      summary: Reorder a playlist's tracks
+      parameters:
+      - in: path
+        name: playlist_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Playlists
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReorderTracksRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ReorderTracksRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Playlist'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No resource exists at this path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/playlists/{playlist_id}/tracks/{track_id}/:
+    delete:
+      operationId: playlists_tracks_destroy
+      summary: Remove a track from a playlist
+      parameters:
+      - in: path
+        name: playlist_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: track_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Playlists
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                NotFound:
+                  value:
+                    detail: Not found.
+                    code: not_found
+                    fields: null
+                  summary: not_found
+          description: No resource exists at this path.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/playlists/recent/:
+    get:
+      operationId: playlists_recent_list
+      description: Powers the home page's "last listened-to playlists" row.
+      summary: List the current user's playlists by last-played
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - in: query
+        name: page
+        schema:
+          type: integer
+        description: 1-indexed page number.
+      - in: query
+        name: pageSize
+        schema:
+          type: integer
+        description: Items per page, max 100.
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - Playlists
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedPlaylistListList'
+          description: ''
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/recommendations/:
+    get:
+      operationId: recommendations_list
+      description: Looks at the artists behind tracks already in the user's playlists;
+        if that set is non-empty, returns up to 10 other tracks by those artists,
+        else falls back to the 10 newest tracks platform-wide. **Unlike every other
+        list endpoint, this one is unpaginated and hard-capped at 10** — there is
+        no `?page`/`?pageSize`.
+      summary: Get personalized track recommendations
+      tags:
+      - Recommendations
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TrackList'
+          description: ''
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/reports/admin/overview/:
+    get:
+      operationId: reports_admin_overview_retrieve
+      description: 'Every figure here — revenue totals/series, tier distribution,
+        platform totals — is aggregated on the backend (`doc.tex` §3.7: no raw lists
+        sent for the frontend to count itself), feeding the accounting table and pie/revenue
+        charts of §2.12.3.'
+      summary: Get the admin platform overview
+      parameters:
+      - in: query
+        name: months
+        schema:
+          type: integer
+        description: Number of trailing months in the revenue series. Silently clamped
+          to [1, 24]; defaults to 6.
+      tags:
+      - Reports
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOverview'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                PermissionDenied:
+                  value:
+                    detail: You do not have permission to perform this action.
+                    code: permission_denied
+                    fields: null
+                  summary: permission_denied
+          description: Authenticated, but not permitted to perform this action.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/reports/artists/{id}/summary/:
+    get:
+      operationId: reports_artists_summary_retrieve
+      description: Viewable by the artist themself, support/admin staff, or a gold
+        listener.
+      summary: Get an artist's summary
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: query
+        name: period
+        schema:
+          type: string
+        description: Month to report on, `YYYY-MM`. Defaults to the current period
+          when omitted.
+      tags:
+      - Reports
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtistSummary'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                PermissionDenied:
+                  value:
+                    detail: You do not have permission to perform this action.
+                    code: permission_denied
+                    fields: null
+                  summary: permission_denied
+          description: Authenticated, but not permitted to perform this action.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No resource exists at this path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/reports/artists/me/payouts/:
+    get:
+      operationId: reports_artists_me_payouts_list
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: pageSize
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - reports
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedArtistOwnPayoutList'
+          description: ''
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/reports/artists/me/summary/:
+    get:
+      operationId: reports_artists_me_summary_retrieve
+      summary: Get the current artist's summary
+      parameters:
+      - in: query
+        name: period
+        schema:
+          type: string
+        description: Month to report on, `YYYY-MM`. Defaults to the current period
+          when omitted.
+      tags:
+      - Reports
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtistSummary'
+          description: ''
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/reports/artists/me/tracks/:
+    get:
+      operationId: reports_artists_me_tracks_list
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: pageSize
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - reports
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTrackStatList'
+          description: ''
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/reports/me/listening/:
+    get:
+      operationId: reports_me_listening_retrieve
+      description: '`daily_limit`/`remaining_today` are `null` for unlimited tiers
+        (silver/gold).'
+      summary: Get the current user's listening stats
+      tags:
+      - Reports
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListeningStats'
+          description: ''
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/reports/payouts/:
+    get:
+      operationId: reports_payouts_list
+      parameters:
+      - in: query
+        name: artist
+        schema:
+          type: string
+          format: uuid
+        description: Artist user id.
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: pageSize
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - in: query
+        name: period
+        schema:
+          type: string
+        description: Payout month, `YYYY-MM`.
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum:
+          - paid
+          - pending
+        description: |-
+          `pending` or `paid`.
+
+          * `pending` - Pending
+          * `paid` - Paid
+      tags:
+      - reports
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedArtistPayoutList'
+          description: ''
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/reports/payouts/{id}/settle/:
+    post:
+      operationId: reports_payouts_settle_create
+      description: Admin only, and idempotent — calling this again on an already-`paid`
+        payout is a no-op that returns the unchanged payout rather than erroring or
+        double-settling (`doc.tex` §2.12.2).
+      summary: Confirm settlement of a payout
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Reports
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtistPayout'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                PermissionDenied:
+                  value:
+                    detail: You do not have permission to perform this action.
+                    code: permission_denied
+                    fields: null
+                  summary: permission_denied
+          description: Authenticated, but not permitted to perform this action.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No resource exists at this path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/reports/payouts/generate/:
+    post:
+      operationId: reports_payouts_generate_create
+      description: Admin only. Builds payouts for `period` (defaults to the previous
+        month) from the current `PayoutPolicy`; already-settled payouts for that period
+        are skipped.
+      summary: Generate monthly payouts
+      tags:
+      - Reports
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GeneratePayoutsRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/GeneratePayoutsRequest'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GeneratePayoutsResult'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                PermissionDenied:
+                  value:
+                    detail: You do not have permission to perform this action.
+                    code: permission_denied
+                    fields: null
+                  summary: permission_denied
+          description: Authenticated, but not permitted to perform this action.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/streams/:
+    post:
+      operationId: streams_create
+      description: Called by the player on playback start; `playlist` is optional
+        context for the `?recent` ordering.
+      summary: Record a play event
+      tags:
+      - Streaming
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StreamCreateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/StreamCreateRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stream'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/subscriptions/pay/callback/:
+    get:
+      operationId: subscriptions_pay_callback_retrieve
+      description: 'The gateway redirects the user''s browser here with no `Authorization`
+        header, yet this view has no `permission_classes` of its own and so inherits
+        the global `IsAuthenticated` default — as written, this callback cannot succeed
+        for a real gateway redirect (see PR write-up). Transaction lifecycle: `pending`
+        -> `success` on a verified callback, `pending` -> `failed` otherwise.'
+      summary: Zarinpal payment callback
+      parameters:
+      - in: query
+        name: Authority
+        schema:
+          type: string
+        description: Zarinpal payment authority token for this transaction.
+        required: true
+      - in: query
+        name: Status
+        schema:
+          type: string
+        description: Zarinpal gateway result, literally `"OK"` or `"NOK"`.
+        required: true
+      tags:
+      - Payments & Subscriptions
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentCallbackResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentCallbackError'
+          description: Payment was cancelled, failed, or verification failed.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/subscriptions/pay/start/:
+    post:
+      operationId: subscriptions_pay_start_create
+      description: Creates a pending `Transaction` and returns a Zarinpal `payment_url`
+        to redirect the user to. Note the request field is `planId` — `CamelCaseJSONParser`
+        un-camelizes the body before the view reads `request.data.get("plan_id")`.
+      summary: Start a subscription payment
+      tags:
+      - Payments & Subscriptions
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentStartRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PaymentStartRequestRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentStartResponse'
+          description: ''
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentGatewayError'
+          description: The payment gateway could not be reached or rejected the request.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400':
+          description: Validation failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/tracks/:
+    get:
+      operationId: tracks_list
+      description: '`?search` matches track title or artist stage name. `?genre` and
+        `?artist` (UUID) filter exactly. `?earlyAccess=true` restricts to tracks still
+        within their early-access window (`doc.tex` §2.9''s Gold-only home page section).'
+      summary: List/search/sort tracks
+      parameters:
+      - in: query
+        name: artist
+        schema:
+          type: string
+          format: uuid
+        description: Artist user id.
+      - in: query
+        name: earlyAccess
+        schema:
+          type: boolean
+        description: If true, only tracks still within their early-access window.
+      - in: query
+        name: genre
+        schema:
+          type: string
+        description: Exact genre match, case-insensitive.
+      - in: query
+        name: ordering
+        schema:
+          type: string
+        description: 'Sort key: one of `playCount`, `-playCount`, `releasedAt`, `-releasedAt`.
+          Prefix with `-` to reverse.'
+      - in: query
+        name: page
+        schema:
+          type: integer
+        description: 1-indexed page number.
+      - in: query
+        name: pageSize
+        schema:
+          type: integer
+        description: Items per page, max 100.
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - Tracks
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTrackListList'
+          description: ''
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      operationId: tracks_create
+      description: Approved artists only.
+      summary: Create a track
+      tags:
+      - Tracks
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrackWriteRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TrackWriteRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                PermissionDenied:
+                  value:
+                    detail: You do not have permission to perform this action.
+                    code: permission_denied
+                    fields: null
+                  summary: permission_denied
+          description: Authenticated, but not permitted to perform this action.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/tracks/{id}/:
+    get:
+      operationId: tracks_retrieve
+      summary: Get a track
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this track.
+        required: true
+      tags:
+      - Tracks
+      security:
+      - jwtAuth: []
+      responses:
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                NotFound:
+                  value:
+                    detail: Not found.
+                    code: not_found
+                    fields: null
+                  summary: not_found
+          description: No resource exists at this path.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      operationId: tracks_partial_update
+      description: Track owner only.
+      summary: Update a track
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this track.
+        required: true
+      tags:
+      - Tracks
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedTrackWriteRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedTrackWriteRequest'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                PermissionDenied:
+                  value:
+                    detail: You do not have permission to perform this action.
+                    code: permission_denied
+                    fields: null
+                  summary: permission_denied
+          description: Authenticated, but not permitted to perform this action.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                NotFound:
+                  value:
+                    detail: Not found.
+                    code: not_found
+                    fields: null
+                  summary: not_found
+          description: No resource exists at this path.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      operationId: tracks_destroy
+      description: Track owner only.
+      summary: Delete a track
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this track.
+        required: true
+      tags:
+      - Tracks
+      security:
+      - jwtAuth: []
+      responses:
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                PermissionDenied:
+                  value:
+                    detail: You do not have permission to perform this action.
+                    code: permission_denied
+                    fields: null
+                  summary: permission_denied
+          description: Authenticated, but not permitted to perform this action.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                NotFound:
+                  value:
+                    detail: Not found.
+                    code: not_found
+                    fields: null
+                  summary: not_found
+          description: No resource exists at this path.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/tracks/{id}/audio/:
+    put:
+      operationId: tracks_audio_update
+      description: |-
+        `audioHigh` and `audioLow` are both required in the one multipart request — the player's
+        quality switch (`doc.tex` §5.1) needs both bitrates present from the start. Content is
+        verified by magic-byte sniffing (`apps.common.validators.AudioSignature`), not the
+        client-supplied `Content-Type`, which is trivially spoofed.
+      summary: Replace the track audio
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Tracks
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TrackAudioUploadRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No resource exists at this path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      operationId: tracks_audio_destroy
+      description: |-
+        `audioHigh` and `audioLow` are both required in the one multipart request — the player's
+        quality switch (`doc.tex` §5.1) needs both bitrates present from the start. Content is
+        verified by magic-byte sniffing (`apps.common.validators.AudioSignature`), not the
+        client-supplied `Content-Type`, which is trivially spoofed.
+      summary: Remove the track audio
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Tracks
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No resource exists at this path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/tracks/{id}/cover/:
+    put:
+      operationId: tracks_cover_update
+      description: A singleton binary sub-resource. PUT replaces it, DELETE clears
+        it.
+      summary: Replace the track cover
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Tracks
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TrackCoverUploadRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ValidationError:
+                  value:
+                    detail: Validation failed.
+                    code: error
+                    fields:
+                      field_name:
+                      - This field is required.
+                  summary: validation_error
+          description: Validation failed.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No resource exists at this path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      operationId: tracks_cover_destroy
+      description: A singleton binary sub-resource. PUT replaces it, DELETE clears
+        it.
+      summary: Remove the track cover
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Tracks
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No resource exists at this path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/tracks/{id}/download/:
+    get:
+      operationId: tracks_download_retrieve
+      description: Silver/Gold tiers only (`doc.tex` §1). Supports HTTP `Range` requests,
+        so a client resuming a partial download gets `206 Partial Content` instead
+        of restarting.
+      summary: Download a track's high-quality audio
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Streaming
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: string
+                format: binary
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                PermissionDenied:
+                  value:
+                    detail: You do not have permission to perform this action.
+                    code: permission_denied
+                    fields: null
+                  summary: permission_denied
+          description: Authenticated, but not permitted to perform this action.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                NotFound:
+                  value:
+                    detail: Not found.
+                    code: not_found
+                    fields: null
+                  summary: not_found
+          description: No resource exists at this path.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/users/{id}/:
+    get:
+      operationId: users_retrieve
+      summary: Get a user's public profile
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Users & Follows
+      security:
+      - jwtAuth: []
+      responses:
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                NotFound:
+                  value:
+                    detail: Not found.
+                    code: not_found
+                    fields: null
+                  summary: not_found
+          description: No resource exists at this path.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/users/{id}/follow/:
+    post:
+      operationId: users_follow_create
+      summary: Follow a user
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Users & Follows
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          description: Now following this user.
+        '200':
+          description: Was already following this user; no-op.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                SelfFollow:
+                  value:
+                    detail: You cannot follow yourself.
+                    code: self_follow
+                    fields: null
+                  summary: self_follow
+          description: Attempted to follow yourself.
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No resource exists at this path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      operationId: users_follow_destroy
+      summary: Unfollow a user
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - Users & Follows
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          description: Missing, invalid, or expired bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated, but not permitted to perform this action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No resource exists at this path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  schemas:
+    AccountStatus:
+      enum:
+      - active
+      - pending
+      - suspended
+      - rejected
+      type: string
+      description: |-
+        * `active` - Active
+        * `pending` - Pending
+        * `suspended` - Suspended
+        * `rejected` - Rejected
+    AddTrackRequest:
+      type: object
+      properties:
+        track:
+          type: string
+          format: uuid
+      required:
+      - track
+    AdminOverview:
+      type: object
+      properties:
+        revenue:
+          $ref: '#/components/schemas/Revenue'
+        tierDistribution:
+          $ref: '#/components/schemas/TierDistribution'
+        totals:
+          $ref: '#/components/schemas/PlatformTotals'
+      required:
+      - revenue
+      - tierDistribution
+      - totals
+    AlbumCoverUploadRequest:
+      type: object
+      properties:
+        cover:
+          type: string
+          format: binary
+      required:
+      - cover
+    AlbumDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        artist:
+          type: string
+          format: uuid
+          readOnly: true
+        title:
+          type: string
+          maxLength: 120
+        releaseYear:
+          type: integer
+          maximum: 32767
+          minimum: 0
+          nullable: true
+        releasedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        cover:
+          type: string
+          format: uri
+          nullable: true
+        tracks:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrackList'
+          readOnly: true
+      required:
+      - artist
+      - createdAt
+      - id
+      - title
+      - tracks
+    AlbumList:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        artist:
+          type: string
+          format: uuid
+          readOnly: true
+        title:
+          type: string
+          maxLength: 120
+        releaseYear:
+          type: integer
+          maximum: 32767
+          minimum: 0
+          nullable: true
+        releasedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        cover:
+          type: string
+          format: uri
+          nullable: true
+      required:
+      - artist
+      - createdAt
+      - id
+      - title
+    AlbumWriteRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        releaseYear:
+          type: integer
+          maximum: 32767
+          minimum: 0
+          nullable: true
+        releasedAt:
+          type: string
+          format: date-time
+      required:
+      - title
+    ArtistList:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        stageName:
+          type: string
+          maxLength: 80
+        verified:
+          type: boolean
+          readOnly: true
+      required:
+      - id
+      - stageName
+      - verified
+    ArtistMe:
+      type: object
+      properties:
+        stageName:
+          type: string
+          maxLength: 80
+        portfolioUrl:
+          type: string
+          format: uri
+          maxLength: 200
+        bio:
+          type: string
+      required:
+      - stageName
+    ArtistMeRequest:
+      type: object
+      properties:
+        stageName:
+          type: string
+          minLength: 1
+          maxLength: 80
+        portfolioUrl:
+          type: string
+          format: uri
+          maxLength: 200
+        bio:
+          type: string
+      required:
+      - stageName
+    ArtistOwnPayout:
+      type: object
+      properties:
+        periodMonth:
+          type: string
+          format: date
+        listeners:
+          type: integer
+        streams:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+        amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        status:
+          $ref: '#/components/schemas/PayoutStatus'
+        settledAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - amount
+      - listeners
+      - periodMonth
+      - streams
+    ArtistPayout:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        artistId:
+          type: string
+          format: uuid
+          readOnly: true
+        artistName:
+          type: string
+          readOnly: true
+        listeners:
+          type: integer
+        streams:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+        amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        status:
+          $ref: '#/components/schemas/PayoutStatus'
+        periodMonth:
+          type: string
+          format: date
+        settledAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - amount
+      - artistId
+      - artistName
+      - id
+      - listeners
+      - periodMonth
+      - streams
+    ArtistSummary:
+      type: object
+      properties:
+        period:
+          type: string
+          nullable: true
+        totalStreams:
+          type: integer
+        totalListeners:
+          type: integer
+        totalEarnings:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        topTrack:
+          allOf:
+          - $ref: '#/components/schemas/TopTrack'
+          nullable: true
+      required:
+      - period
+      - topTrack
+      - totalEarnings
+      - totalListeners
+      - totalStreams
+    AvatarUploadRequest:
+      type: object
+      properties:
+        avatar:
+          type: string
+          format: binary
+      required:
+      - avatar
+    BlankEnum:
+      enum:
+      - ''
+    CustomTokenObtainPairRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          writeOnly: true
+          minLength: 1
+        password:
+          type: string
+          writeOnly: true
+          minLength: 1
+      required:
+      - email
+      - password
+    Error:
+      type: object
+      description: The exact envelope `apps.common.exceptions.api_exception_handler`
+        returns.
+      properties:
+        detail:
+          type: string
+        code:
+          type: string
+        fields:
+          type: object
+          additionalProperties: {}
+          nullable: true
+      required:
+      - code
+      - detail
+    GenderEnum:
+      enum:
+      - male
+      - female
+      - other
+      type: string
+      description: |-
+        * `male` - Male
+        * `female` - Female
+        * `other` - Other
+    GeneratePayoutsRequest:
+      type: object
+      properties:
+        period:
+          type: string
+          nullable: true
+          minLength: 1
+    GeneratePayoutsResult:
+      type: object
+      properties:
+        period:
+          type: string
+          format: date
+        created:
+          type: integer
+        updated:
+          type: integer
+        skippedSettled:
+          type: integer
+      required:
+      - created
+      - period
+      - skippedSettled
+      - updated
+    LanguageEnum:
+      enum:
+      - en
+      - fa
+      - es
+      type: string
+      description: |-
+        * `en` - English
+        * `fa` - Persian
+        * `es` - Spanish
+    ListeningStats:
+      type: object
+      properties:
+        streamsToday:
+          type: integer
+        streamsThisMonth:
+          type: integer
+        dailyLimit:
+          type: integer
+          nullable: true
+        remainingToday:
+          type: integer
+          nullable: true
+      required:
+      - dailyLimit
+      - remainingToday
+      - streamsThisMonth
+      - streamsToday
+    MeUpdateRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+          maxLength: 60
+        email:
+          type: string
+          format: email
+          minLength: 1
+          maxLength: 254
+        bio:
+          type: string
+        password:
+          type: string
+          writeOnly: true
+          minLength: 8
+      required:
+      - email
+    PaginatedAlbumListList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/AlbumList'
+    PaginatedArtistListList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArtistList'
+    PaginatedArtistOwnPayoutList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArtistOwnPayout'
+    PaginatedArtistPayoutList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArtistPayout'
+    PaginatedPlaylistListList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlaylistList'
+    PaginatedSampleWorkList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SampleWork'
+    PaginatedTrackListList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrackList'
+    PaginatedTrackStatList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrackStat'
+    PasswordResetConfirmRequest:
+      type: object
+      properties:
+        uid:
+          type: string
+          minLength: 1
+        token:
+          type: string
+          minLength: 1
+        newPassword:
+          type: string
+          minLength: 8
+      required:
+      - newPassword
+      - token
+      - uid
+    PasswordResetRequestRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+      required:
+      - email
+    PatchedAlbumWriteRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        releaseYear:
+          type: integer
+          maximum: 32767
+          minimum: 0
+          nullable: true
+        releasedAt:
+          type: string
+          format: date-time
+    PatchedArtistMeRequest:
+      type: object
+      properties:
+        stageName:
+          type: string
+          minLength: 1
+          maxLength: 80
+        portfolioUrl:
+          type: string
+          format: uri
+          maxLength: 200
+        bio:
+          type: string
+    PatchedMeUpdateRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+          maxLength: 60
+        email:
+          type: string
+          format: email
+          minLength: 1
+          maxLength: 254
+        bio:
+          type: string
+        password:
+          type: string
+          writeOnly: true
+          minLength: 8
+    PatchedPlaylistWriteRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        isPublic:
+          type: boolean
+    PatchedTrackWriteRequest:
+      type: object
+      properties:
+        album:
+          type: string
+          format: uuid
+          nullable: true
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        lyrics:
+          type: string
+        genre:
+          type: string
+          maxLength: 40
+        releaseYear:
+          type: integer
+          maximum: 32767
+          minimum: 0
+          nullable: true
+        releaseType:
+          $ref: '#/components/schemas/ReleaseTypeEnum'
+        collaborators:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 80
+        durationMs:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+          nullable: true
+        earlyAccessUntil:
+          type: string
+          format: date-time
+          nullable: true
+    PatchedUserPreferencesRequest:
+      type: object
+      properties:
+        language:
+          $ref: '#/components/schemas/LanguageEnum'
+        notifLimit:
+          type: boolean
+        volume:
+          type: integer
+          maximum: 100
+          minimum: 0
+        repeatMode:
+          $ref: '#/components/schemas/RepeatModeEnum'
+        shuffle:
+          type: boolean
+        playbackQuality:
+          $ref: '#/components/schemas/PlaybackQualityEnum'
+    PaymentCallbackError:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+      - error
+    PaymentCallbackResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        refId:
+          type: string
+      required:
+      - message
+      - refId
+    PaymentGatewayError:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+      - error
+    PaymentStartRequestRequest:
+      type: object
+      properties:
+        planId:
+          type: string
+          format: uuid
+      required:
+      - planId
+    PaymentStartResponse:
+      type: object
+      properties:
+        paymentUrl:
+          type: string
+          format: uri
+      required:
+      - paymentUrl
+    PayoutStatus:
+      enum:
+      - pending
+      - paid
+      type: string
+      description: |-
+        * `pending` - Pending
+        * `paid` - Paid
+    PlatformTotals:
+      type: object
+      properties:
+        users:
+          type: integer
+        listeners:
+          type: integer
+        artists:
+          type: integer
+        pendingArtists:
+          type: integer
+        tracks:
+          type: integer
+        albums:
+          type: integer
+        streamsThisMonth:
+          type: integer
+      required:
+      - albums
+      - artists
+      - listeners
+      - pendingArtists
+      - streamsThisMonth
+      - tracks
+      - users
+    PlaybackQualityEnum:
+      enum:
+      - high
+      - low
+      type: string
+      description: |-
+        * `high` - High
+        * `low` - Low
+    Playlist:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        owner:
+          type: string
+          format: uuid
+          readOnly: true
+        title:
+          type: string
+          maxLength: 120
+        isPublic:
+          type: boolean
+        cover:
+          type: string
+          format: uri
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        tracks:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlaylistTrack'
+          readOnly: true
+      required:
+      - createdAt
+      - id
+      - owner
+      - title
+      - tracks
+    PlaylistCoverUploadRequest:
+      type: object
+      properties:
+        cover:
+          type: string
+          format: binary
+      required:
+      - cover
+    PlaylistList:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        owner:
+          type: string
+          format: uuid
+          readOnly: true
+        title:
+          type: string
+          maxLength: 120
+        isPublic:
+          type: boolean
+        cover:
+          type: string
+          format: uri
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        trackCount:
+          type: integer
+          readOnly: true
+      required:
+      - createdAt
+      - id
+      - owner
+      - title
+      - trackCount
+    PlaylistTrack:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        artist:
+          type: string
+          format: uuid
+        durationMs:
+          type: integer
+        position:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+      required:
+      - artist
+      - durationMs
+      - id
+      - position
+      - title
+    PlaylistWriteRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        isPublic:
+          type: boolean
+      required:
+      - title
+    RegisterArtistRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+          maxLength: 254
+        password:
+          type: string
+          writeOnly: true
+          minLength: 8
+        stageName:
+          type: string
+          minLength: 1
+          maxLength: 80
+        portfolio:
+          type: string
+          format: uri
+      required:
+      - email
+      - password
+      - stageName
+    RegisterArtistResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/UserMe'
+      required:
+      - user
+    RegisterListenerRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+          maxLength: 254
+        password:
+          type: string
+          writeOnly: true
+          minLength: 8
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 60
+        birthDate:
+          type: string
+          format: date
+          nullable: true
+        gender:
+          oneOf:
+          - $ref: '#/components/schemas/GenderEnum'
+          - $ref: '#/components/schemas/BlankEnum'
+        acceptedPolicy:
+          type: boolean
+          writeOnly: true
+      required:
+      - acceptedPolicy
+      - displayName
+      - email
+      - password
+    RegisterListenerResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/UserMe'
+        access:
+          type: string
+        refresh:
+          type: string
+      required:
+      - access
+      - refresh
+      - user
+    ReleaseTypeEnum:
+      enum:
+      - single
+      - album_track
+      type: string
+      description: |-
+        * `single` - Single
+        * `album_track` - Album track
+    ReorderTracksRequest:
+      type: object
+      properties:
+        order:
+          type: array
+          items:
+            type: string
+            format: uuid
+      required:
+      - order
+    RepeatModeEnum:
+      enum:
+      - 'off'
+      - all
+      - one
+      type: string
+      description: |-
+        * `off` - Off
+        * `all` - All
+        * `one` - One
+    Revenue:
+      type: object
+      properties:
+        currentMonth:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        total:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        activeSubscriptions:
+          type: integer
+        series:
+          type: array
+          items:
+            $ref: '#/components/schemas/RevenueSeriesItem'
+      required:
+      - activeSubscriptions
+      - currentMonth
+      - series
+      - total
+    RevenueSeriesItem:
+      type: object
+      properties:
+        month:
+          type: string
+        label:
+          type: string
+        amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+      required:
+      - amount
+      - label
+      - month
+    RoleEnum:
+      enum:
+      - listener
+      - artist
+      - support
+      - admin
+      type: string
+      description: |-
+        * `listener` - Listener
+        * `artist` - Artist
+        * `support` - Support
+        * `admin` - Admin
+    SampleWork:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        title:
+          type: string
+          readOnly: true
+        file:
+          type: string
+          format: uri
+          readOnly: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - createdAt
+      - file
+      - id
+      - title
+    SampleWorkUpload:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 120
+        file:
+          type: string
+          format: uri
+      required:
+      - file
+      - title
+    SampleWorkUploadRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        file:
+          type: string
+          format: binary
+      required:
+      - file
+      - title
+    Stream:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        track:
+          type: string
+          format: uuid
+          readOnly: true
+        playlist:
+          type: string
+          format: uuid
+          readOnly: true
+          nullable: true
+        playedAt:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - id
+      - playedAt
+      - playlist
+      - track
+    StreamCreateRequest:
+      type: object
+      properties:
+        track:
+          type: string
+          format: uuid
+        playlist:
+          type: string
+          format: uuid
+          nullable: true
+      required:
+      - track
+    TierDistribution:
+      type: object
+      properties:
+        basic:
+          type: integer
+        silver:
+          type: integer
+        gold:
+          type: integer
+      required:
+      - basic
+      - gold
+      - silver
+    TokenRefreshRequest:
+      type: object
+      properties:
+        refresh:
+          type: string
+          minLength: 1
+      required:
+      - refresh
+    TopTrack:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        streams:
+          type: integer
+      required:
+      - id
+      - streams
+      - title
+    TrackAudioUploadRequest:
+      type: object
+      properties:
+        audioHigh:
+          type: string
+          format: binary
+        audioLow:
+          type: string
+          format: binary
+      required:
+      - audioHigh
+      - audioLow
+    TrackCoverUploadRequest:
+      type: object
+      properties:
+        cover:
+          type: string
+          format: binary
+      required:
+      - cover
+    TrackList:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        artist:
+          type: string
+          format: uuid
+          readOnly: true
+        album:
+          type: string
+          format: uuid
+          readOnly: true
+          nullable: true
+        title:
+          type: string
+          maxLength: 120
+        genre:
+          type: string
+          maxLength: 40
+        releaseYear:
+          type: integer
+          maximum: 32767
+          minimum: 0
+          nullable: true
+        releasedAt:
+          type: string
+          format: date-time
+        releaseType:
+          $ref: '#/components/schemas/ReleaseTypeEnum'
+        durationMs:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+          nullable: true
+        playCount:
+          type: integer
+          readOnly: true
+        uniqueListenerCount:
+          type: integer
+          readOnly: true
+        earlyAccessUntil:
+          type: string
+          format: date-time
+          nullable: true
+        cover:
+          type: string
+          format: uri
+          nullable: true
+        audioHigh:
+          type: string
+          format: uri
+          nullable: true
+        audioLow:
+          type: string
+          format: uri
+          nullable: true
+      required:
+      - album
+      - artist
+      - id
+      - playCount
+      - title
+      - uniqueListenerCount
+    TrackStat:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        cover:
+          type: string
+          format: uri
+          nullable: true
+        streamCount:
+          type: integer
+        listenerCount:
+          type: integer
+        earnings:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        releasedAt:
+          type: string
+          format: date-time
+      required:
+      - cover
+      - earnings
+      - id
+      - listenerCount
+      - releasedAt
+      - streamCount
+      - title
+    TrackWriteRequest:
+      type: object
+      properties:
+        album:
+          type: string
+          format: uuid
+          nullable: true
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        lyrics:
+          type: string
+        genre:
+          type: string
+          maxLength: 40
+        releaseYear:
+          type: integer
+          maximum: 32767
+          minimum: 0
+          nullable: true
+        releaseType:
+          $ref: '#/components/schemas/ReleaseTypeEnum'
+        collaborators:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 80
+        durationMs:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+          nullable: true
+        earlyAccessUntil:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - title
+    UserMe:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        username:
+          type: string
+          readOnly: true
+          pattern: ^[-a-zA-Z0-9_]+$
+        displayName:
+          type: string
+          maxLength: 60
+        role:
+          allOf:
+          - $ref: '#/components/schemas/RoleEnum'
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/AccountStatus'
+          readOnly: true
+        tier:
+          type: string
+          readOnly: true
+        bio:
+          type: string
+        avatar:
+          type: string
+          format: uri
+          nullable: true
+        birthDate:
+          type: string
+          format: date
+          nullable: true
+        gender:
+          oneOf:
+          - $ref: '#/components/schemas/GenderEnum'
+          - $ref: '#/components/schemas/BlankEnum'
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        preferences:
+          allOf:
+          - $ref: '#/components/schemas/UserPreferences'
+          readOnly: true
+      required:
+      - createdAt
+      - email
+      - id
+      - preferences
+      - role
+      - status
+      - tier
+      - username
+    UserPreferences:
+      type: object
+      properties:
+        language:
+          $ref: '#/components/schemas/LanguageEnum'
+        notifLimit:
+          type: boolean
+        volume:
+          type: integer
+          maximum: 100
+          minimum: 0
+        repeatMode:
+          $ref: '#/components/schemas/RepeatModeEnum'
+        shuffle:
+          type: boolean
+        playbackQuality:
+          $ref: '#/components/schemas/PlaybackQualityEnum'
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - updatedAt
+  securitySchemes:
+    jwtAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+tags:
+- name: Auth
+  description: Registration, login, token refresh, password reset.
+- name: Account
+  description: The current user's profile, avatar, and preferences.
+- name: Users & Follows
+  description: Public user profiles and the follow graph.
+- name: Artists
+  description: Artist profiles, approval, and sample works.
+- name: Albums
+  description: Album CRUD and cover art.
+- name: Tracks
+  description: Track CRUD, search/filter/sort, cover/audio uploads.
+- name: Streaming
+  description: Playback recording and authenticated downloads.
+- name: Recommendations
+  description: Personalized track recommendations.
+- name: Playlists
+  description: Playlist CRUD, track ordering, and covers.
+- name: Reports
+  description: Artist, support, and admin reporting/statistics.
+- name: Payments & Subscriptions
+  description: Subscription plans and payment gateway integration.
