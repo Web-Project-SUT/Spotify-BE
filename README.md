@@ -24,7 +24,21 @@ DATABASE_URL=postgres://ava@localhost:5432/spotify_be
 CORS_ALLOWED_ORIGINS=http://localhost:3000
 ```
 
-API docs at `http://localhost:8000/api/docs/`.
+## API documentation
+
+- Swagger UI: `http://localhost:8000/api/docs/`
+- ReDoc: `http://localhost:8000/api/redoc/`
+- Raw OpenAPI schema: `http://localhost:8000/api/schema/`
+
+Regenerate the committed schema (`docs/openapi.yaml`) after changing any view/serializer/`extend_schema`:
+
+```bash
+python manage.py spectacular --file docs/openapi.yaml --validate --fail-on-warn
+```
+
+`apps.common.tests.test_schema` checks this file stays in sync — commit the regenerated file
+alongside your change. Log in at `/api/docs/` with any seeded demo account (`password123`) and
+"Authorize" with the returned `access` token to try protected endpoints.
 
 ## Tests
 
