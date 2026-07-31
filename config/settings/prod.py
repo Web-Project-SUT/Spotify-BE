@@ -10,3 +10,8 @@ SECURE_HSTS_SECONDS = 60 * 60 * 24 * 7
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 
 EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
+
+SPECTACULAR_SETTINGS = {
+    **SPECTACULAR_SETTINGS,  # noqa: F405
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.IsAdminUser"],
+}
