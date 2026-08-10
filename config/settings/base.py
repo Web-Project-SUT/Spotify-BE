@@ -138,6 +138,15 @@ SIMPLE_JWT = {
 
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=["http://localhost:3000"])
 
+# Frontend base URL — the payment callback redirects the browser back here
+# after Zarinpal so the user lands on a real page, not a JSON response.
+FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:3000")
+
+# Zarinpal payment gateway (sandbox by default). merchant_id can be any UUID
+# in the sandbox; override both in production via the environment.
+ZARINPAL_MERCHANT_ID = env("ZARINPAL_MERCHANT_ID", default="c8d2f8b6-07c1-496c-9f4c-f8e8afae1955")
+ZARINPAL_BASE_URL = env("ZARINPAL_BASE_URL", default="https://sandbox.zarinpal.com/pg")
+
 ASGI_APPLICATION = 'config.asgi.application'
 
 # برای محیط توسعه از حافظه موقت برای مدیریت رویدادها استفاده می‌کنیم
