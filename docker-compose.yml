@@ -1,0 +1,51 @@
+# One-command stack: Postgres + backend + frontend.
+# Run from the Spotify-BE directory with Spotify-FE as a sibling folder:
+#   docker compose up --build
+# Then open http://localhost:3000
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: spotify_be
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  backend:
+    build: .
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      DJANGO_SECRET_KEY: docker-dev-secret-change-me
+      DJANGO_DEBUG: "True"
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,0.0.0.0,backend
+      DATABASE_URL: postgres://postgres:postgres@db:5432/spotify_be
+      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      FRONTEND_URL: http://localhost:3000
+      ZARINPAL_MERCHANT_ID: c8d2f8b6-07c1-496c-9f4c-f8e8afae1955
+      ZARINPAL_BASE_URL: https://sandbox.zarinpal.com/pg
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ../Spotify-FE
+      args:
+        # Baked into the client bundle at build time. The browser talks to
+        # the host-published backend port, not the compose network name.
+        NEXT_PUBLIC_API_URL: http://localhost:8000/api
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
