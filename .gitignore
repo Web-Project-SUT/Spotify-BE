@@ -53,3 +53,7 @@ staticfiles/
 .pytest_cache/
 .ruff_cache/
 .coverage
+
+# Keep committed examples/docs
+!.env.example
+!INTEGRATION.md
