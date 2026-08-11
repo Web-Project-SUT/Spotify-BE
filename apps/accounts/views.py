@@ -309,3 +309,27 @@ class ArtistSampleWorkListView(generics.ListAPIView):
         if getattr(self, "swagger_fake_view", False):
             return SampleWork.objects.none()
         return SampleWork.objects.filter(artist_id=self.kwargs["pk"])
+
+
+class NotificationListView(generics.ListAPIView):
+    """The authenticated user's notifications, newest first."""
+
+    from .models import Notification
+    from .serializers import NotificationSerializer
+
+    serializer_class = NotificationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
+
+    def get_queryset(self):
+        return self.request.user.notifications.order_by("-created_at")
+
+
+class NotificationMarkReadView(APIView):
+    """Mark all of the user's notifications as read."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        request.user.notifications.filter(is_read=False).update(is_read=True)
+        return Response(status=status.HTTP_204_NO_CONTENT)

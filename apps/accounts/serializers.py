@@ -251,3 +251,12 @@ class SampleWorkUploadSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         artist = self.context["request"].user.artist_profile
         return SampleWork.objects.create(artist=artist, **validated_data)
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        from .models import Notification
+
+        model = Notification
+        fields = ["id", "title", "message", "type", "is_read", "created_at"]
+        read_only_fields = fields
