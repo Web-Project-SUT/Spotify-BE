@@ -9,8 +9,10 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.permissions import IsAdmin
+
 from .models import Subscription, SubscriptionPlan, Transaction
-from .serializers import SubscriptionPlanSerializer
+from .serializers import PlanPriceUpdateSerializer, SubscriptionPlanSerializer
 from .services import initiate_payment, verify_payment
 
 
@@ -21,6 +23,14 @@ class PlanListView(generics.ListAPIView):
     serializer_class = SubscriptionPlanSerializer
     permission_classes = [AllowAny]
     pagination_class = None
+
+
+class PlanPriceUpdateView(generics.UpdateAPIView):
+    """Admin-only price editing (Task 29 — dynamic subscription pricing)."""
+
+    queryset = SubscriptionPlan.objects.all()
+    serializer_class = PlanPriceUpdateSerializer
+    permission_classes = [IsAdmin]
 
 
 class PaymentStartView(APIView):

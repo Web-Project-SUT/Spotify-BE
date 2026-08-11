@@ -17,3 +17,16 @@ class SubscriptionPlanSerializer(serializers.ModelSerializer):
             "has_early_access",
             "can_view_stats",
         ]
+
+
+class PlanPriceUpdateSerializer(serializers.ModelSerializer):
+    """Admin-only price edit (Task 29 — dynamic subscription pricing).
+
+    Only monthly_price is writable; every other field stays read-only so a
+    price change can never accidentally alter a plan's tier or limits.
+    """
+
+    class Meta:
+        model = SubscriptionPlan
+        fields = SubscriptionPlanSerializer.Meta.fields
+        read_only_fields = [f for f in fields if f != "monthly_price"]
