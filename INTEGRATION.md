@@ -120,16 +120,24 @@ not force-push**. The frontend stack is linear, so
 `git rebase --onto origin/main main feat/dockerize` (or merging each in order)
 brings it across cleanly.
 
-## Finish-line (not yet wired, resource layer is ready)
+## Completion status
 
-These have tested resource modules but their dashboard components still read
-the mock store — swap them to the loaders the same way the catalog components
-were done:
+The follow-up completion pass wired every remaining item on both sides:
 
-- Artist stats dashboard → `reports.loadMyArtistSummary()` / `loadMyTrackStats()`
-- Revenue chart / accounting table → `reports.loadAdminOverview()` / `loadPayouts()`
-- Artist upload forms → `uploads.uploadTrackAudio()` / `uploadAlbumCover()` (multipart)
-- Artist profile page → still mock (needs an `/artists/{id}/` detail loader)
+- Reporting dashboards (artist stats, revenue chart, recent playlists) -> `reports.*`
+- Artist profile page -> `catalog.loadArtist()` (`/artists/{id}/`)
+- Artist upload form -> `catalog.createTrack()` + `uploads.*` (multipart)
+- Dynamic pricing (#29) -> admin `PATCH /subscriptions/plans/<id>/` + PriceControl
+- Password reset -> `auth/password-reset[/confirm]` + `/forgot-password` and `/reset-password/[uid]/[token]`
+- Notifications -> `GET/POST /auth/me/notifications/` + NotificationPanel
+- Group listening (bonus #32) -> WebSocket client on `ws/session/<id>/`
 
-Docker Compose is YAML-validated but wasn't run end-to-end in the build
-sandbox (no Docker daemon there).
+Test totals: backend **143**, frontend **256**.
+
+New branches this pass — backend: `feat/dynamic-pricing`, `feat/notifications`;
+frontend (stacked): `feat/complete-reporting`, `feat/dynamic-pricing-ui`,
+`feat/password-reset`, `feat/artist-uploads`, `feat/notifications-ui`,
+`feat/group-session-realtime`.
+
+Only remaining caveat: Docker Compose is YAML-validated but was not run
+end-to-end in the build sandbox (no Docker daemon there).
