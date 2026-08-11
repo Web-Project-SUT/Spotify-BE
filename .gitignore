@@ -57,3 +57,4 @@ staticfiles/
 # Keep committed examples/docs
 !.env.example
 !INTEGRATION.md
+!CHECKLIST.md
