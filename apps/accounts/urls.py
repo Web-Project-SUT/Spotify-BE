@@ -20,6 +20,16 @@ urlpatterns = [
     path("auth/me/avatar/", views.AvatarView.as_view(), name="me-avatar"),
     path("auth/me/preferences/", views.PreferencesView.as_view(), name="me-preferences"),
     path(
+        "auth/me/notifications/",
+        views.NotificationListView.as_view(),
+        name="me-notifications",
+    ),
+    path(
+        "auth/me/notifications/read/",
+        views.NotificationMarkReadView.as_view(),
+        name="me-notifications-read",
+    ),
+    path(
         "auth/password-reset/",
         views.PasswordResetRequestView.as_view(),
         name="password-reset",

@@ -57,6 +57,8 @@ class Command(BaseCommand):
         self._make_subscription(silver, silver_plan)
         self._make_subscription(gold, gold_plan)
 
+        self._make_notifications(gold, nova)
+
         PayoutPolicy.objects.get_or_create(
             effective_from=date(2020, 1, 1),
             defaults={
@@ -143,3 +145,16 @@ class Command(BaseCommand):
             for listener in listeners:
                 if not PlayEvent.objects.filter(user=listener, track=track).exists():
                     record_stream(user=listener, track=track)
+
+    def _make_notifications(self, listener, artist):
+        from apps.accounts.models import Notification
+
+        specs = [
+            (listener, "Welcome to Streamr", "Enjoy unlimited listening.", "subscription"),
+            (listener, "New release", "An artist you follow just dropped a track.", "release"),
+            (artist, "Profile approved", "Your artist account is now active.", "approval"),
+        ]
+        for recipient, title, message, ntype in specs:
+            Notification.objects.get_or_create(
+                recipient=recipient, title=title, defaults={"message": message, "type": ntype}
+            )
