@@ -97,3 +97,42 @@ class PaymentTests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_302_FOUND)
         self.assertIn("payment=cancelled", response.url)
+
+
+@override_settings(FRONTEND_URL=FE)
+class PlanPricingTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.plan = SubscriptionPlan.objects.create(tier=Tier.SILVER, monthly_price=Decimal("4.99"))
+        self.admin = User.objects.create_user(
+            email="admin@example.com", username="admin1", password="password", role="admin"
+        )
+        self.listener = User.objects.create_user(
+            email="l@example.com", username="l1", password="password"
+        )
+
+    def test_admin_can_update_plan_price(self):
+        self.client.force_authenticate(user=self.admin)
+        res = self.client.patch(
+            reverse("plan-update", args=[self.plan.id]), {"monthly_price": "6.50"}
+        )
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.plan.refresh_from_db()
+        self.assertEqual(self.plan.monthly_price, Decimal("6.50"))
+
+    def test_price_update_cannot_change_tier(self):
+        self.client.force_authenticate(user=self.admin)
+        res = self.client.patch(
+            reverse("plan-update", args=[self.plan.id]),
+            {"monthly_price": "7.00", "tier": "gold"},
+        )
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.plan.refresh_from_db()
+        self.assertEqual(self.plan.tier, Tier.SILVER)  # tier is read-only
+
+    def test_non_admin_cannot_update_price(self):
+        self.client.force_authenticate(user=self.listener)
+        res = self.client.patch(
+            reverse("plan-update", args=[self.plan.id]), {"monthly_price": "1.00"}
+        )
+        self.assertIn(res.status_code, (status.HTTP_403_FORBIDDEN, status.HTTP_401_UNAUTHORIZED))
