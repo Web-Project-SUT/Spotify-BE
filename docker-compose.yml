@@ -19,6 +19,8 @@ services:
 
   backend:
     build: .
+    volumes:
+      - .:/app
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.dev
       DJANGO_SECRET_KEY: docker-dev-secret-change-me
