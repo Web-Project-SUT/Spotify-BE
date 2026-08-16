@@ -1,9 +1,8 @@
 import re
 
-from django.conf.urls.static import static
-
 from django.conf import settings
 from django.contrib import admin
+from django.contrib.staticfiles.urls import staticfiles_urlpatterns
 from django.urls import include, path, re_path
 from drf_spectacular.views import (
     SpectacularAPIView,
@@ -30,11 +29,12 @@ urlpatterns = [
 ]
 
 if settings.DEBUG:
+    # Media: serve_media (not django.conf.urls.static.static) because the
+    # frontend's <audio> needs Range responses for seeking.
     urlpatterns += [
         re_path(r"^%s(?P<path>.*)$" % re.escape(settings.MEDIA_URL.lstrip("/")), serve_media),
     ]
-
-
-if settings.DEBUG:
-    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    # Static: resolved through the staticfiles finders, so the admin CSS is
+    # served under daphne/ASGI too. Serving STATIC_ROOT instead would 404
+    # until collectstatic has run, which nothing does.
+    urlpatterns += staticfiles_urlpatterns()
