@@ -122,8 +122,10 @@ class TrackAudioUploadSerializer(serializers.Serializer):
             AudioSignature(),
         ],
     )
+    # Optional: the low-quality transcode. Artists upload one file; requiring
+    # both here 400s every real upload and leaves the track row silent.
     audio_low = serializers.FileField(
-        required=True,
+        required=False,
         validators=[
             MaxFileSize(settings.MEDIA_AUDIO_MAX_BYTES),
             AllowedExtension(settings.MEDIA_AUDIO_EXTENSIONS),

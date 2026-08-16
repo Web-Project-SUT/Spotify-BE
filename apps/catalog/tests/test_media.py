@@ -66,7 +66,9 @@ class TrackAudioTests(MediaTestCase):
         self.assertTrue(response.data["audio_high"].startswith("http://testserver/media/"))
         self.assertTrue(response.data["audio_low"].startswith("http://testserver/media/"))
 
-    def test_missing_audio_low_returns_400(self):
+    def test_high_only_upload_succeeds(self):
+        """audio_low is the optional transcode; uploading just the high-quality
+        file is the normal artist flow and must not 400."""
         artist = ArtistUserFactory()
         track = TrackFactory(artist=artist)
         response = self.client.put(
@@ -75,8 +77,21 @@ class TrackAudioTests(MediaTestCase):
             format="multipart",
             **auth_headers(artist),
         )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["audio_high"].startswith("http://testserver/media/"))
+        self.assertIsNone(response.data["audio_low"])
+
+    def test_missing_audio_high_returns_400(self):
+        artist = ArtistUserFactory()
+        track = TrackFactory(artist=artist)
+        response = self.client.put(
+            f"/api/tracks/{track.id}/audio/",
+            {"audioLow": make_audio_file("lo.mp3")},
+            format="multipart",
+            **auth_headers(artist),
+        )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("audio_low", response.data["fields"])
+        self.assertIn("audio_high", response.data["fields"])
 
     def test_non_owner_forbidden(self):
         artist = ArtistUserFactory()

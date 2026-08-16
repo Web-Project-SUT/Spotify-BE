@@ -34,7 +34,13 @@ class MediaResourceView(generics.GenericAPIView):
             self.quota_class().check(request.user)
         serializer = self.get_upload_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        files = {field: serializer.validated_data[field] for field in self.media_fields}
+        # Only the fields actually submitted: an optional media field that was
+        # left out must stay as it is, not KeyError here.
+        files = {
+            field: serializer.validated_data[field]
+            for field in self.media_fields
+            if field in serializer.validated_data
+        }
         media_utils.replace_files(instance, files)
         return Response(self.get_read_serializer(instance).data)
 
