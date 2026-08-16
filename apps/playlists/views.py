@@ -32,7 +32,14 @@ class PlaylistViewSet(viewsets.ModelViewSet):
         if getattr(self, "swagger_fake_view", False):
             return Playlist.objects.none()
         if self.action == "list":
-            return Playlist.objects.filter(owner=self.request.user)
+            # order_by is explicit because annotate() with an aggregate drops
+            # Meta.ordering (it would otherwise land in the GROUP BY), which
+            # leaves the paginator with an unordered queryset.
+            return (
+                Playlist.objects.filter(owner=self.request.user)
+                .annotate(last_played_at=Max("play_events__played_at"))
+                .order_by("-created_at")
+            )
         # Object-level permission (IsPlaylistOwner) enforces public-vs-owner
         # access; a private playlist owned by someone else should 403, not
         # be silently excluded from the queryset and read as a 404.

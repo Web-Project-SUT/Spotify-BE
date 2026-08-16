@@ -21,13 +21,30 @@ class PlaylistTrackSerializer(serializers.ModelSerializer):
 class PlaylistListSerializer(serializers.ModelSerializer):
     owner = serializers.UUIDField(source="owner_id", read_only=True)
     track_count = serializers.SerializerMethodField()
+    last_played_at = serializers.SerializerMethodField()
 
     class Meta:
         model = Playlist
-        fields = ["id", "owner", "title", "is_public", "cover", "created_at", "track_count"]
+        fields = [
+            "id",
+            "owner",
+            "title",
+            "is_public",
+            "cover",
+            "created_at",
+            "track_count",
+            "last_played_at",
+        ]
 
     def get_track_count(self, obj) -> int:
         return obj.entries.count()
+
+    # Comes from the queryset annotation, not the model. A method field (not
+    # a plain DateTimeField) so serializing an un-annotated Playlist — from a
+    # future view, or a single instance — degrades to null instead of raising.
+    def get_last_played_at(self, obj) -> str | None:
+        played_at = getattr(obj, "last_played_at", None)
+        return played_at.isoformat() if played_at else None
 
 
 class PlaylistSerializer(serializers.ModelSerializer):
