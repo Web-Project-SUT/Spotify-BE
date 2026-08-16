@@ -7,7 +7,36 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from apps.common.validators import AllowedExtension, MaxFileSize
 
 from . import services
-from .models import AccountStatus, ArtistProfile, SampleWork, User, UserPreferences
+from .models import AccountStatus, ArtistProfile, Follow, SampleWork, User, UserPreferences
+
+
+class FollowCountsMixin:
+    """Social numbers for a profile payload, aggregated server-side.
+
+    `Follow.follower` is related_name="following_edges" and `Follow.following`
+    is related_name="follower_edges" — crossed on purpose, so a user's
+    *followers* are their `follower_edges` and the accounts they follow are
+    their `following_edges`.
+    """
+
+    def _follow_target(self, obj) -> User:
+        """The User the counts are about — overridden where obj isn't one."""
+        return obj
+
+    def get_follower_count(self, obj) -> int:
+        return self._follow_target(obj).follower_edges.count()
+
+    def get_following_count(self, obj) -> int:
+        return self._follow_target(obj).following_edges.count()
+
+    def get_is_following(self, obj) -> bool:
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return False
+        target = self._follow_target(obj)
+        if request.user.pk == target.pk:
+            return False
+        return Follow.objects.filter(follower=request.user, following=target).exists()
 
 
 class ArtistListSerializer(serializers.ModelSerializer):
@@ -22,12 +51,14 @@ class ArtistListSerializer(serializers.ModelSerializer):
         return obj.user.status == AccountStatus.ACTIVE
 
 
-class ArtistDetailSerializer(serializers.ModelSerializer):
+class ArtistDetailSerializer(FollowCountsMixin, serializers.ModelSerializer):
     id = serializers.UUIDField(source="user_id", read_only=True)
     bio = serializers.CharField(source="user.bio", read_only=True)
     verified = serializers.SerializerMethodField()
     total_plays = serializers.SerializerMethodField()
     total_listeners = serializers.SerializerMethodField()
+    follower_count = serializers.SerializerMethodField()
+    is_following = serializers.SerializerMethodField()
 
     class Meta:
         model = ArtistProfile
@@ -39,7 +70,13 @@ class ArtistDetailSerializer(serializers.ModelSerializer):
             "verified",
             "total_plays",
             "total_listeners",
+            "follower_count",
+            "is_following",
         ]
+
+    # The instance is an ArtistProfile; the follow edges hang off its User.
+    def _follow_target(self, obj) -> User:
+        return obj.user
 
     def get_verified(self, obj) -> bool:
         return obj.user.status == AccountStatus.ACTIVE
@@ -77,10 +114,26 @@ class ArtistMeSerializer(serializers.ModelSerializer):
         return instance
 
 
-class UserPublicSerializer(serializers.ModelSerializer):
+class UserPublicSerializer(FollowCountsMixin, serializers.ModelSerializer):
+    tier = serializers.CharField(read_only=True)
+    follower_count = serializers.SerializerMethodField()
+    following_count = serializers.SerializerMethodField()
+    is_following = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ["id", "username", "display_name", "role", "avatar"]
+        fields = [
+            "id",
+            "username",
+            "display_name",
+            "role",
+            "avatar",
+            "bio",
+            "tier",
+            "follower_count",
+            "following_count",
+            "is_following",
+        ]
 
 
 class UserPreferencesSerializer(serializers.ModelSerializer):
