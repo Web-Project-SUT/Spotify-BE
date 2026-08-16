@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 
 from apps.common.http import range_file_response
 from apps.common.permissions import IsApprovedArtist, IsSilverOrAbove
+from apps.common.quotas import DailyStreamQuota
 from apps.common.views import MediaResourceView
 
 from .filters import TrackFilterSet
@@ -126,6 +127,10 @@ class StreamCreateView(generics.CreateAPIView):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        # The tier's daily stream cap is enforced here, at the only place a
+        # PlayEvent is created from a request; reports/services.py merely
+        # reports the same quota back to the listener.
+        DailyStreamQuota().check(request.user)
         event = serializer.save()
         return Response(StreamSerializer(event).data, status=status.HTTP_201_CREATED)
 
