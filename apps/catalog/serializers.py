@@ -19,6 +19,7 @@ class TrackListSerializer(serializers.ModelSerializer):
             "artist",
             "album",
             "title",
+            "lyrics",
             "genre",
             "release_year",
             "released_at",
