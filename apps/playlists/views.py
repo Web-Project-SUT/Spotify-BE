@@ -38,6 +38,7 @@ class PlaylistViewSet(viewsets.ModelViewSet):
             return (
                 Playlist.objects.filter(owner=self.request.user)
                 .annotate(last_played_at=Max("play_events__played_at"))
+                .prefetch_related("entries")
                 .order_by("-created_at")
             )
         # Object-level permission (IsPlaylistOwner) enforces public-vs-owner
@@ -82,6 +83,7 @@ class PlaylistViewSet(viewsets.ModelViewSet):
         queryset = (
             Playlist.objects.filter(owner=request.user)
             .annotate(last_played_at=Max("play_events__played_at"))
+            .prefetch_related("entries")
             .order_by(F("last_played_at").desc(nulls_last=True))
         )
         page = self.paginate_queryset(queryset)

@@ -21,6 +21,7 @@ class PlaylistTrackSerializer(serializers.ModelSerializer):
 class PlaylistListSerializer(serializers.ModelSerializer):
     owner = serializers.UUIDField(source="owner_id", read_only=True)
     track_count = serializers.SerializerMethodField()
+    track_ids = serializers.SerializerMethodField()
     last_played_at = serializers.SerializerMethodField()
 
     class Meta:
@@ -33,11 +34,17 @@ class PlaylistListSerializer(serializers.ModelSerializer):
             "cover",
             "created_at",
             "track_count",
+            "track_ids",
             "last_played_at",
         ]
 
     def get_track_count(self, obj) -> int:
-        return obj.entries.count()
+        return len(obj.entries.all())
+
+    # Relies on the queryset's .prefetch_related("entries") — obj.entries.all()
+    # then hits the prefetch cache instead of firing one query per playlist.
+    def get_track_ids(self, obj) -> list[str]:
+        return [str(entry.track_id) for entry in obj.entries.all()]
 
     # Comes from the queryset annotation, not the model. A method field (not
     # a plain DateTimeField) so serializing an un-annotated Playlist — from a

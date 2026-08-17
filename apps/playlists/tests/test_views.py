@@ -84,6 +84,25 @@ class PlaylistTracksTests(APITestCase):
         self.assertEqual(track_ids, [str(track_b.id), str(track_a.id)])
 
 
+class PlaylistListMembershipTests(APITestCase):
+    def test_list_returns_track_ids_for_membership_checks(self):
+        owner = UserFactory()
+        headers = auth_headers(owner)
+        playlist = Playlist.objects.create(owner=owner, title="Mix")
+        track = TrackFactory()
+        self.client.post(
+            f"/api/playlists/{playlist.id}/tracks/",
+            {"track": str(track.id)},
+            format="json",
+            **headers,
+        )
+
+        response = self.client.get("/api/playlists/", **headers)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        row = response.json()["results"][0]
+        self.assertEqual(row["trackIds"], [str(track.id)])
+
+
 class PlaylistPrivacyTests(APITestCase):
     def test_other_user_cannot_read_private_playlist(self):
         owner = UserFactory()
