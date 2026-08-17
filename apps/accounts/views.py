@@ -27,6 +27,7 @@ from .serializers import (
     AvatarUploadSerializer,
     CustomTokenObtainPairSerializer,
     MeUpdateSerializer,
+    NotificationSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     PendingArtistSerializer,
@@ -176,7 +177,7 @@ class PasswordResetConfirmView(APIView):
         try:
             uid = force_str(urlsafe_base64_decode(data["uid"]))
             user = User.objects.get(pk=uid)
-        except (User.DoesNotExist, ValueError, TypeError, OverflowError):
+        except (User.DoesNotExist, ValueError, TypeError, OverflowError):  # fmt: skip
             return Response(
                 {"detail": "Invalid reset link.", "code": "invalid_reset_link", "fields": None},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -378,9 +379,6 @@ class ArtistSampleWorkListView(generics.ListAPIView):
 
 class NotificationListView(generics.ListAPIView):
     """The authenticated user's notifications, newest first."""
-
-    from .models import Notification
-    from .serializers import NotificationSerializer
 
     serializer_class = NotificationSerializer
     permission_classes = [permissions.IsAuthenticated]

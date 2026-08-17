@@ -57,11 +57,9 @@ class ArtistMeSummaryView(APIView):
 class ArtistMeTracksView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated, IsArtist]
     serializer_class = TrackStatSerializer
-    ordering_fields = [
-        ("streams", "streamCount"),
-        ("listeners", "listenerCount"),
-        ("earnings", "earnings"),
-    ]
+    # Plain annotation names — see the note in catalog.views.TrackViewSet:
+    # ?ordering=-streams / -listeners / -earnings.
+    ordering_fields = ["streams", "listeners", "earnings"]
     ordering = ["-streams"]
 
     def get_queryset(self):
@@ -145,7 +143,7 @@ class AdminOverviewView(APIView):
     def get(self, request):
         try:
             months = int(request.query_params.get("months", 6))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # fmt: skip
             months = 6
         months = max(1, min(months, 24))
 

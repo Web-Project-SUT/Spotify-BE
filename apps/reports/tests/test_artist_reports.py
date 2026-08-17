@@ -52,9 +52,7 @@ class ArtistMeSummaryPeriodTests(APITestCase):
         listener = UserFactory()
         event = record_stream(user=listener, track=track)
         old_month = (timezone.now() - timedelta(days=60)).strftime("%Y-%m")
-        PlayEvent.objects.filter(pk=event.pk).update(
-            played_at=timezone.now() - timedelta(days=60)
-        )
+        PlayEvent.objects.filter(pk=event.pk).update(played_at=timezone.now() - timedelta(days=60))
 
         current_response = self.client.get(
             f"/api/reports/artists/me/summary/?period={timezone.now().strftime('%Y-%m')}",

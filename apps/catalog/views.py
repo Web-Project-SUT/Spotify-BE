@@ -13,6 +13,7 @@ from apps.common.http import range_file_response
 from apps.common.permissions import IsApprovedArtist, IsSilverOrAbove
 from apps.common.quotas import DailyStreamQuota
 from apps.common.views import MediaResourceView
+from apps.playlists.models import Playlist
 
 from .filters import AlbumFilterSet, TrackFilterSet
 from .models import Album, Track
@@ -29,9 +30,7 @@ from .serializers import (
     TrackListSerializer,
     TrackWriteSerializer,
 )
-from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
-from apps.playlists.models import Playlist
+
 
 class AlbumViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete"]
@@ -86,10 +85,11 @@ class TrackViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete"]
     filterset_class = TrackFilterSet
     search_fields = ["title", "artist__artist_profile__stage_name"]
-    ordering_fields = [
-        ("play_count", "playCount"),
-        ("released_at", "releasedAt"),
-    ]
+    # Plain source names: DRF's OrderingFilter validates the query value against
+    # item[0], so the (source, label) tuple form silently accepted camelCase and
+    # then dropped it. The camelCase wire rule doesn't reach query params, so the
+    # accepted values are snake_case: ?ordering=-play_count / -released_at.
+    ordering_fields = ["play_count", "released_at"]
     ordering = ["-released_at"]
 
     def get_queryset(self):
@@ -142,33 +142,35 @@ class StreamCreateView(generics.CreateAPIView):
         return Response(StreamSerializer(event).data, status=status.HTTP_201_CREATED)
 
 
-
 class RecommendationAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         user = request.user
-        
-        # جستجو در مدل واسط (entries) برای پیدا کردن هنرمندان
-        user_playlists = Playlist.objects.filter(owner=user).prefetch_related('entries__track__artist')
-        liked_artists = set()
-        
-        for playlist in user_playlists:
-            for entry in playlist.entries.all():
-                if entry.track and entry.track.artist:
-                    liked_artists.add(entry.track.artist.id)
-        
-        # اگر کاربر سابقه داشت، آهنگ‌های همان هنرمندان را پیشنهاد بده
-        visible = Track.objects.visible_to(user)
-        if liked_artists:
-            recommended_tracks = visible.filter(artist_id__in=liked_artists).distinct()[:10]
-        # در غیر این صورت، جدیدترین آهنگ‌ها را برگردان
+
+        # Artists the user already has in a playlist, in a single query
+        # (the old code looped playlists in Python — one query per playlist).
+        liked_artist_ids = (
+            Playlist.objects.filter(owner=user)
+            .values_list("entries__track__artist_id", flat=True)
+            .distinct()
+        )
+        liked_artist_ids = [aid for aid in liked_artist_ids if aid is not None]
+
+        visible = Track.objects.visible_to(user).select_related("artist", "album")
+        if liked_artist_ids:
+            # Recommend more from those artists...
+            recommended = visible.filter(artist_id__in=liked_artist_ids).distinct()[:10]
         else:
-            recommended_tracks = visible.order_by('-created_at')[:10]
-            
-        # استفاده از نام درست سریالایزر پروژه شما
-        serializer = TrackListSerializer(recommended_tracks, many=True)
+            # ...otherwise fall back to the newest tracks.
+            recommended = visible.order_by("-created_at")[:10]
+
+        # context={"request": ...} so cover/audio URLs come back absolute, like
+        # every other endpoint (D-7).
+        serializer = TrackListSerializer(recommended, many=True, context={"request": request})
         return Response(serializer.data)
+
+
 @extend_schema_view(
     put=extend_schema(
         request={"multipart/form-data": AlbumCoverUploadSerializer},

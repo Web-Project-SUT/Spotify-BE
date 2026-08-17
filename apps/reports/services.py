@@ -194,16 +194,12 @@ def revenue_series(*, months: int) -> list[dict]:
 def revenue_summary() -> dict:
     now = timezone.now()
     since, until = month_bounds(date(now.year, now.month, 1))
-    current_month = (
-        Transaction.objects.filter(
-            status="success", created_at__gte=since, created_at__lt=until
-        ).aggregate(total=Sum("amount"))["total"]
-        or Decimal("0")
-    )
-    total = (
-        Transaction.objects.filter(status="success").aggregate(total=Sum("amount"))["total"]
-        or Decimal("0")
-    )
+    current_month = Transaction.objects.filter(
+        status="success", created_at__gte=since, created_at__lt=until
+    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+    total = Transaction.objects.filter(status="success").aggregate(total=Sum("amount"))[
+        "total"
+    ] or Decimal("0")
     active_subscriptions = Subscription.objects.filter(status="active", expires_at__gt=now).count()
     return {
         "current_month": current_month,

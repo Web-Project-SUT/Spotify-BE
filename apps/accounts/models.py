@@ -162,7 +162,9 @@ class Follow(TimeStampedModel):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["follower", "following"], name="uniq_follow"),
-            models.CheckConstraint(condition=~Q(follower=models.F("following")), name="no_self_follow"),
+            models.CheckConstraint(
+                condition=~Q(follower=models.F("following")), name="no_self_follow"
+            ),
         ]
 
     def __str__(self):

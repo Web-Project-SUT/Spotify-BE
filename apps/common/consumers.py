@@ -24,7 +24,7 @@ def _user_from_token(token):
     try:
         validated = AccessToken(token)
         return User.objects.get(pk=validated["user_id"])
-    except (TokenError, User.DoesNotExist, KeyError):
+    except (TokenError, User.DoesNotExist, KeyError):  # fmt: skip
         return AnonymousUser()
 
 

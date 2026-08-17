@@ -13,7 +13,7 @@ DEBUG = env.bool("DJANGO_DEBUG", default=False)
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=[])
 
 INSTALLED_APPS = [
-    'daphne',
+    "daphne",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -30,7 +30,7 @@ INSTALLED_APPS = [
     "apps.catalog",
     "apps.playlists",
     "apps.subscriptions",
-    'channels',
+    "channels",
     "apps.reports",
     "apps.tickets",
 ]
@@ -148,11 +148,7 @@ FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:3000")
 ZARINPAL_MERCHANT_ID = env("ZARINPAL_MERCHANT_ID", default="c8d2f8b6-07c1-496c-9f4c-f8e8afae1955")
 ZARINPAL_BASE_URL = env("ZARINPAL_BASE_URL", default="https://sandbox.zarinpal.com/pg")
 
-ASGI_APPLICATION = 'config.asgi.application'
+ASGI_APPLICATION = "config.asgi.application"
 
 # برای محیط توسعه از حافظه موقت برای مدیریت رویدادها استفاده می‌کنیم
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer"
-    }
-}
+CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}

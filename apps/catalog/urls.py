@@ -10,8 +10,7 @@ router.register("tracks", views.TrackViewSet, basename="track")
 
 urlpatterns = [
     path("streams/", views.StreamCreateView.as_view(), name="stream-create"),
-    path('recommendations/', RecommendationAPIView.as_view(), name='track-recommendations'),
-
+    path("recommendations/", RecommendationAPIView.as_view(), name="track-recommendations"),
     path("albums/<uuid:pk>/cover/", views.AlbumCoverView.as_view(), name="album-cover"),
     path("tracks/<uuid:pk>/cover/", views.TrackCoverView.as_view(), name="track-cover"),
     path("tracks/<uuid:pk>/audio/", views.TrackAudioView.as_view(), name="track-audio"),

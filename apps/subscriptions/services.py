@@ -14,6 +14,7 @@ Both merchant_id and the base URL come from settings so the same code runs
 against the sandbox in development and the live gateway in production.
 `amount` is sent in Rial (the stored monthly price is scaled by 10000).
 """
+
 import calendar
 from datetime import timedelta
 
@@ -63,7 +64,7 @@ def initiate_payment(amount, description, callback_url):
         if data.get("code") == 100 and data.get("authority"):
             authority = data["authority"]
             return authority, f"{_base()}/StartPay/{authority}"
-    except (requests.RequestException, ValueError):
+    except (requests.RequestException, ValueError):  # fmt: skip
         pass
     return None, None
 
@@ -83,7 +84,7 @@ def verify_payment(authority, amount):
         # 100 = verified now, 101 = previously verified (idempotent replay).
         if data.get("code") in (100, 101):
             return True, str(data.get("ref_id"))
-    except (requests.RequestException, ValueError):
+    except (requests.RequestException, ValueError):  # fmt: skip
         pass
     return False, None
 

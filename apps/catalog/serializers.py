@@ -11,6 +11,11 @@ from .models import Album, PlayEvent, Track
 class TrackListSerializer(serializers.ModelSerializer):
     artist = serializers.UUIDField(source="artist_id", read_only=True)
     album = serializers.UUIDField(source="album_id", read_only=True, allow_null=True)
+    # doc.tex restricts listener/stream counts to gold; enforce it server-side
+    # (D-1) rather than trusting the frontend to hide them. The track's own
+    # artist and staff always see them (artist dashboard, moderation).
+    play_count = serializers.SerializerMethodField()
+    unique_listener_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Track
@@ -34,6 +39,19 @@ class TrackListSerializer(serializers.ModelSerializer):
             "audio_low",
         ]
         read_only_fields = ["id", "artist", "play_count", "unique_listener_count"]
+
+    def _may_see_stats(self, instance) -> bool:
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user is None or not user.is_authenticated:
+            return False
+        return user.tier == "gold" or user.is_staff or instance.artist_id == user.id
+
+    def get_play_count(self, instance):
+        return instance.play_count if self._may_see_stats(instance) else None
+
+    def get_unique_listener_count(self, instance):
+        return instance.unique_listener_count if self._may_see_stats(instance) else None
 
 
 class AlbumListSerializer(serializers.ModelSerializer):

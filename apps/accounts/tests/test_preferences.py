@@ -156,9 +156,7 @@ class PreferencesCrossDeviceTests(APITestCase):
         )
         self.assertEqual(login.status_code, status.HTTP_200_OK)
         access = login.data["access"]
-        response = other_client.get(
-            PREFERENCES_URL, HTTP_AUTHORIZATION=f"Bearer {access}"
-        )
+        response = other_client.get(PREFERENCES_URL, HTTP_AUTHORIZATION=f"Bearer {access}")
         self.assertEqual(response.data["volume"], 55)
 
 
@@ -213,17 +211,13 @@ class PreferencesEmbeddedInMeTests(APITestCase):
 class NotifyTests(APITestCase):
     def test_release_delivered_by_default(self):
         recipient = UserFactory()
-        services.notify(
-            [recipient], type=Notification.Type.RELEASE, title="t", message="m"
-        )
+        services.notify([recipient], type=Notification.Type.RELEASE, title="t", message="m")
         self.assertTrue(Notification.objects.filter(recipient=recipient).exists())
 
     def test_release_suppressed_when_notif_limit_true(self):
         recipient = UserFactory()
         UserPreferencesFactory(user=recipient, notif_limit=True)
-        services.notify(
-            [recipient], type=Notification.Type.RELEASE, title="t", message="m"
-        )
+        services.notify([recipient], type=Notification.Type.RELEASE, title="t", message="m")
         self.assertFalse(Notification.objects.filter(recipient=recipient).exists())
 
     def test_essential_types_always_delivered_even_with_notif_limit(self):
@@ -235,9 +229,7 @@ class NotifyTests(APITestCase):
             with self.subTest(type=essential_type):
                 recipient = UserFactory()
                 UserPreferencesFactory(user=recipient, notif_limit=True)
-                services.notify(
-                    [recipient], type=essential_type, title="t", message="m"
-                )
+                services.notify([recipient], type=essential_type, title="t", message="m")
                 self.assertTrue(Notification.objects.filter(recipient=recipient).exists())
 
     def test_release_fan_out_avoids_n_plus_1(self):
@@ -251,9 +243,7 @@ class NotifyTests(APITestCase):
     def test_essential_type_fan_out_has_no_suppression_query(self):
         recipients = [UserFactory() for _ in range(3)]
         with self.assertNumQueries(1):
-            services.notify(
-                recipients, type=Notification.Type.APPROVAL, title="t", message="m"
-            )
+            services.notify(recipients, type=Notification.Type.APPROVAL, title="t", message="m")
         self.assertEqual(Notification.objects.count(), 3)
 
 

@@ -34,9 +34,7 @@ class AdminOverviewTests(APITestCase):
         track = TrackFactory(artist=artist)
         record_stream(user=listener, track=track)
 
-        response = self.client.get(
-            "/api/reports/admin/overview/?months=3", **auth_headers(admin)
-        )
+        response = self.client.get("/api/reports/admin/overview/?months=3", **auth_headers(admin))
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.data

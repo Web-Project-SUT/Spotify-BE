@@ -19,12 +19,6 @@ class SubscriptionPlanSerializer(serializers.ModelSerializer):
             "id",
             "tier",
             "monthly_price",
-            "daily_stream_limit",
-            "playlist_limit",
-            "can_add_avatar",
-            "can_download",
-            "has_early_access",
-            "can_view_stats",
         ]
 
 

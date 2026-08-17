@@ -22,16 +22,12 @@ class SubscriptionPlan(TimeStampedModel):
     tier = models.CharField(max_length=8, choices=Tier.choices, unique=True)
     monthly_price = models.DecimalField(max_digits=10, decimal_places=2)
     is_active = models.BooleanField(default=True)
-    
-    # Task 28 limits (Null means unlimited)
-    daily_stream_limit = models.IntegerField(null=True, blank=True, help_text="Null means unlimited")
-    playlist_limit = models.IntegerField(null=True, blank=True, help_text="Null means unlimited")
-    
-    # Access control flags
-    can_add_avatar = models.BooleanField(default=False)
-    can_download = models.BooleanField(default=False)
-    has_early_access = models.BooleanField(default=False)
-    can_view_stats = models.BooleanField(default=False)
+
+    # The per-tier limits and entitlement flags that used to live here were
+    # never read by the running rules (those are in apps/common/quotas.py and
+    # apps/common/permissions.py) and were never populated, so the DB "claimed"
+    # e.g. gold has no early access while the app granted it. Removed with their
+    # dead permission classes (D-2) so the model carries only what is used.
 
     def __str__(self):
         return self.get_tier_display()
@@ -72,6 +68,8 @@ class Subscription(UUIDModel, TimeStampedModel):
         if self.expires_at and timezone.now() > self.expires_at:
             return False
         return True
+
+
 class Transaction(TimeStampedModel, UUIDModel):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"

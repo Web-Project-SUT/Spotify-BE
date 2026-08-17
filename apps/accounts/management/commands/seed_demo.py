@@ -58,6 +58,9 @@ class Command(BaseCommand):
         self._make_subscription(gold, gold_plan)
 
         self._make_notifications(gold, nova)
+        # listener@demo.com is the most-used demo account; without this its
+        # notifications page looks broken (D-14).
+        self._make_notifications(listener, nova)
 
         PayoutPolicy.objects.get_or_create(
             effective_from=date(2020, 1, 1),

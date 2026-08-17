@@ -59,9 +59,7 @@ class TrackListEarlyAccessTests(APITestCase):
         gold_listener = UserFactory()
         SubscriptionFactory(user=gold_listener, plan__tier="gold", status="active")
 
-        response = self.client.get(
-            "/api/tracks/?earlyAccess=true", **auth_headers(gold_listener)
-        )
+        response = self.client.get("/api/tracks/?earlyAccess=true", **auth_headers(gold_listener))
         ids = {row["id"] for row in response.json()["results"]}
         self.assertEqual(ids, {str(embargoed.id)})
 
@@ -72,9 +70,7 @@ class TrackListEarlyAccessTests(APITestCase):
         gold_listener = UserFactory()
         SubscriptionFactory(user=gold_listener, plan__tier="gold", status="active")
 
-        response = self.client.get(
-            "/api/tracks/?earlyAccess=false", **auth_headers(gold_listener)
-        )
+        response = self.client.get("/api/tracks/?earlyAccess=false", **auth_headers(gold_listener))
         ids = {row["id"] for row in response.json()["results"]}
         self.assertEqual(ids, {str(released.id), str(never_gated.id)})
 
