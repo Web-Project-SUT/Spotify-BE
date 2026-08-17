@@ -69,6 +69,33 @@ def register_artist(*, email, password, stage_name, portfolio_url=""):
     raise RuntimeError("Could not generate a unique username.")
 
 
+def create_user(
+    *, email, password, display_name="", role=Role.LISTENER, status=AccountStatus.ACTIVE
+):
+    """Create a user on an admin's behalf (the dashboard's Users tab).
+
+    Unlike self-registration there is no approval step: whatever role and
+    status the admin picked is what the account gets.
+    """
+    for _ in range(_MAX_ATTEMPTS):
+        username = generate_username(display_name or email.split("@")[0])
+        try:
+            with transaction.atomic():
+                user = User.objects.create_user(
+                    email=email,
+                    password=password,
+                    username=username,
+                    display_name=display_name,
+                    role=role,
+                    status=status,
+                )
+                get_preferences(user)
+                return user
+        except IntegrityError:
+            continue
+    raise RuntimeError("Could not generate a unique username.")
+
+
 def get_preferences(user):
     prefs, _ = UserPreferences.objects.get_or_create(user=user)
     return prefs

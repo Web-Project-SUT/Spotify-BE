@@ -13,13 +13,22 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from apps.common.permissions import IsApprovedArtist, IsArtist, IsListenerOrArtist, IsSupportOrAdmin
+from apps.common.permissions import (
+    IsAdmin,
+    IsApprovedArtist,
+    IsArtist,
+    IsListenerOrArtist,
+    IsSupportOrAdmin,
+)
 from apps.common.quotas import AvatarUploadQuota
 from apps.common.views import MediaResourceView
 
 from . import services
 from .models import AccountStatus, ArtistProfile, Follow, Notification, SampleWork, User
 from .serializers import (
+    AdminUserCreateSerializer,
+    AdminUserSerializer,
+    AdminUserUpdateSerializer,
     ArtistDetailSerializer,
     ArtistListSerializer,
     ArtistMeSerializer,
@@ -293,10 +302,58 @@ class ArtistMeView(generics.UpdateAPIView):
         return artist_profile_or_404(self.request.user)
 
 
-class UserDetailView(generics.RetrieveAPIView):
-    serializer_class = UserPublicSerializer
-    permission_classes = [permissions.IsAuthenticated]
+class UserListCreateView(generics.ListCreateAPIView):
+    """The admin dashboard's Users tab: browse the roster and add an account.
+
+    Admin-only — this is the one place emails and account statuses are listed,
+    and the only way to hand out a role without going through the Django admin.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, IsAdmin]
+    queryset = User.objects.order_by("-created_at")
+    search_fields = ["email", "username", "display_name"]
+    filterset_fields = ["role", "status"]
+    ordering_fields = ["created_at", "email", "role"]
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return AdminUserCreateSerializer
+        return AdminUserSerializer
+
+    @extend_schema(request=AdminUserCreateSerializer, responses={201: AdminUserSerializer})
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        output = AdminUserSerializer(user, context=self.get_serializer_context())
+        return Response(output.data, status=status.HTTP_201_CREATED)
+
+
+@extend_schema_view(patch=extend_schema(responses={200: AdminUserSerializer}))
+class UserDetailView(generics.RetrieveUpdateAPIView):
+    """GET is the public profile card every signed-in user can read; PATCH is
+    the admin-only role/status editor. PUT is excluded — there is no case for
+    replacing a whole user record."""
+
     queryset = User.objects.all()
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_permissions(self):
+        if self.request.method == "PATCH":
+            return [permissions.IsAuthenticated(), IsAdmin()]
+        return [permissions.IsAuthenticated()]
+
+    def get_serializer_class(self):
+        if self.request.method == "PATCH":
+            return AdminUserUpdateSerializer
+        return UserPublicSerializer
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        return Response(AdminUserSerializer(instance, context=self.get_serializer_context()).data)
 
 
 class FollowView(APIView):

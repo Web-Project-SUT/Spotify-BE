@@ -70,6 +70,7 @@ urlpatterns = [
         views.ArtistSampleWorkListView.as_view(),
         name="artist-sample-works",
     ),
+    path("users/", views.UserListCreateView.as_view(), name="user-list-create"),
     path("users/<uuid:pk>/", views.UserDetailView.as_view(), name="user-detail"),
     path("users/<uuid:pk>/follow/", views.FollowView.as_view(), name="user-follow"),
 ]

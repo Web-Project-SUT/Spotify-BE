@@ -9,7 +9,7 @@ from apps.common.validators import AllowedExtension, MaxFileSize
 from apps.subscriptions.models import Subscription
 
 from . import services
-from .models import AccountStatus, ArtistProfile, Follow, SampleWork, User, UserPreferences
+from .models import AccountStatus, ArtistProfile, Follow, Role, SampleWork, User, UserPreferences
 
 
 class FollowCountsMixin:
@@ -150,6 +150,66 @@ class UserPublicSerializer(FollowCountsMixin, serializers.ModelSerializer):
             "following_count",
             "is_following",
         ]
+
+
+class AdminUserSerializer(serializers.ModelSerializer):
+    """A row in the admin dashboard's user table (doc.tex §2.10).
+
+    Admin-only, so unlike `UserPublicSerializer` it may expose the email and
+    the account status the admin needs in order to manage the account.
+    """
+
+    tier = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "email",
+            "username",
+            "display_name",
+            "role",
+            "status",
+            "tier",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
+class AdminUserCreateSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, min_length=8)
+    display_name = serializers.CharField(max_length=60, required=False, allow_blank=True)
+
+    class Meta:
+        model = User
+        fields = ["email", "password", "display_name", "role", "status"]
+
+    def create(self, validated_data):
+        return services.create_user(
+            email=validated_data["email"],
+            password=validated_data["password"],
+            display_name=validated_data.get("display_name", ""),
+            role=validated_data.get("role", Role.LISTENER),
+            status=validated_data.get("status", AccountStatus.ACTIVE),
+        )
+
+
+class AdminUserUpdateSerializer(serializers.ModelSerializer):
+    """Role/status editing. Promoting someone to `artist` gets them an
+    `ArtistProfile` for free — `accounts.signals.ensure_artist_profile`."""
+
+    class Meta:
+        model = User
+        fields = ["display_name", "role", "status"]
+
+    def validate(self, attrs):
+        actor = self.context["request"].user
+        if self.instance == actor and "role" in attrs and attrs["role"] != actor.role:
+            # An admin demoting themselves loses the panel they are standing in.
+            raise serializers.ValidationError(
+                {"role": "You cannot change your own role."}, code="self_role_change"
+            )
+        return attrs
 
 
 class UserPreferencesSerializer(serializers.ModelSerializer):
