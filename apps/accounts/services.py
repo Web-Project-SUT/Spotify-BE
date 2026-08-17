@@ -55,8 +55,12 @@ def register_artist(*, email, password, stage_name, portfolio_url=""):
                     role=Role.ARTIST,
                     status=AccountStatus.PENDING,
                 )
-                ArtistProfile.objects.create(
-                    user=user, stage_name=stage_name, portfolio_url=portfolio_url
+                # `ensure_artist_profile` has already created the row from the
+                # `User` post_save, so fill in the application details rather
+                # than inserting a second time.
+                ArtistProfile.objects.update_or_create(
+                    user=user,
+                    defaults={"stage_name": stage_name, "portfolio_url": portfolio_url},
                 )
                 get_preferences(user)
                 return user

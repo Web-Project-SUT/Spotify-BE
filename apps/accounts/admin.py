@@ -1,11 +1,35 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
+from django.contrib.auth.forms import AdminUserCreationForm, UserChangeForm
 
 from .models import ArtistProfile, Follow, Notification, SampleWork, User, UserPreferences
 
 
+class StreamrUserCreationForm(AdminUserCreationForm):
+    """Django's admin user forms hard-code ``field_classes = {"username": UsernameField}``.
+
+    ``UsernameField`` is a plain ``CharField``, but our ``username`` is a
+    ``SlugField`` whose ``formfield()`` passes ``allow_unicode`` — which
+    ``CharField`` rejects with a ``TypeError``, 500ing the add/change views.
+    Clearing the mapping lets ``SlugField`` build its own form field.
+    """
+
+    class Meta(AdminUserCreationForm.Meta):
+        model = User
+        fields = ("email", "username")
+        field_classes = {}
+
+
+class StreamrUserChangeForm(UserChangeForm):
+    class Meta(UserChangeForm.Meta):
+        model = User
+        field_classes = {}
+
+
 @admin.register(User)
 class UserAdmin(DjangoUserAdmin):
+    add_form = StreamrUserCreationForm
+    form = StreamrUserChangeForm
     ordering = ["-created_at"]
     list_display = ["email", "username", "role", "status", "is_staff"]
     list_filter = ["role", "status", "is_staff"]

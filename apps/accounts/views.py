@@ -41,6 +41,16 @@ from .serializers import (
 )
 
 
+def artist_profile_or_404(user):
+    """`ensure_artist_profile` keeps every artist supplied with a profile, but a
+    row predating that signal (or removed by hand) must read as "no such artist"
+    rather than crash the view with `RelatedObjectDoesNotExist`."""
+    try:
+        return user.artist_profile
+    except ArtistProfile.DoesNotExist as exc:
+        raise Http404("This user has no artist profile.") from exc
+
+
 class RegisterListenerView(generics.CreateAPIView):
     serializer_class = RegisterListenerSerializer
     permission_classes = [permissions.AllowAny]
@@ -197,8 +207,10 @@ class ArtistListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return ArtistProfile.objects.filter(user__status=AccountStatus.ACTIVE).select_related(
-            "user"
+        return (
+            ArtistProfile.objects.filter(user__status=AccountStatus.ACTIVE)
+            .select_related("user")
+            .order_by("stage_name")
         )
 
 
@@ -278,7 +290,7 @@ class ArtistMeView(generics.UpdateAPIView):
     permission_classes = [permissions.IsAuthenticated, IsApprovedArtist]
 
     def get_object(self):
-        return self.request.user.artist_profile
+        return artist_profile_or_404(self.request.user)
 
 
 class UserDetailView(generics.RetrieveAPIView):
@@ -335,7 +347,7 @@ class SampleWorkListCreateView(generics.ListCreateAPIView):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return SampleWork.objects.none()
-        return SampleWork.objects.filter(artist=self.request.user.artist_profile)
+        return SampleWork.objects.filter(artist=artist_profile_or_404(self.request.user))
 
     def get_serializer_class(self):
         if self.request.method == "POST":
@@ -359,7 +371,7 @@ class SampleWorkDeleteView(generics.DestroyAPIView):
     serializer_class = SampleWorkSerializer
 
     def get_queryset(self):
-        return SampleWork.objects.filter(artist=self.request.user.artist_profile)
+        return SampleWork.objects.filter(artist=artist_profile_or_404(self.request.user))
 
     def perform_destroy(self, instance):
         if instance.file:
