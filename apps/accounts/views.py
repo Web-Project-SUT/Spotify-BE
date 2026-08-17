@@ -2,6 +2,7 @@ from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import send_mail
 from django.http import Http404
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from drf_spectacular.utils import extend_schema, extend_schema_view
@@ -17,16 +18,18 @@ from apps.common.quotas import AvatarUploadQuota
 from apps.common.views import MediaResourceView
 
 from . import services
-from .models import AccountStatus, ArtistProfile, Follow, SampleWork, User
+from .models import AccountStatus, ArtistProfile, Follow, Notification, SampleWork, User
 from .serializers import (
     ArtistDetailSerializer,
     ArtistListSerializer,
     ArtistMeSerializer,
+    ArtistRejectSerializer,
     AvatarUploadSerializer,
     CustomTokenObtainPairSerializer,
     MeUpdateSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
+    PendingArtistSerializer,
     RegisterArtistSerializer,
     RegisterListenerSerializer,
     SampleWorkSerializer,
@@ -206,6 +209,67 @@ class ArtistDetailView(generics.RetrieveAPIView):
 
     def get_queryset(self):
         return ArtistProfile.objects.select_related("user")
+
+
+class PendingArtistListView(generics.ListAPIView):
+    """The artist-review queue: applications waiting on a support/admin decision."""
+
+    serializer_class = PendingArtistSerializer
+    permission_classes = [permissions.IsAuthenticated, IsSupportOrAdmin]
+
+    def get_queryset(self):
+        return (
+            ArtistProfile.objects.filter(user__status=AccountStatus.PENDING)
+            .select_related("user")
+            .order_by("created_at")
+        )
+
+
+class ArtistApproveView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsSupportOrAdmin]
+
+    @extend_schema(request=None, responses={204: None})
+    def post(self, request, pk):
+        profile = get_object_or_404(ArtistProfile, user_id=pk, user__status=AccountStatus.PENDING)
+        now = timezone.now()
+        profile.verified_at = now
+        profile.reviewed_by = request.user
+        profile.reviewed_at = now
+        profile.save(update_fields=["verified_at", "reviewed_by", "reviewed_at"])
+        profile.user.status = AccountStatus.ACTIVE
+        profile.user.save(update_fields=["status"])
+        services.notify(
+            [profile.user],
+            type=Notification.Type.APPROVAL,
+            title="Artist account approved",
+            message="You can now publish your work.",
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ArtistRejectView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsSupportOrAdmin]
+
+    def post(self, request, pk):
+        profile = get_object_or_404(ArtistProfile, user_id=pk, user__status=AccountStatus.PENDING)
+        serializer = ArtistRejectSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        reason = serializer.validated_data["reason"]
+
+        now = timezone.now()
+        profile.rejection_reason = reason
+        profile.reviewed_by = request.user
+        profile.reviewed_at = now
+        profile.save(update_fields=["rejection_reason", "reviewed_by", "reviewed_at"])
+        profile.user.status = AccountStatus.REJECTED
+        profile.user.save(update_fields=["status"])
+        services.notify(
+            [profile.user],
+            type=Notification.Type.APPROVAL,
+            title="Artist application rejected",
+            message=f"Reason: {reason}",
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class ArtistMeView(generics.UpdateAPIView):

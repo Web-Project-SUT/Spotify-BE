@@ -51,6 +51,7 @@ urlpatterns = [
     ),
     path("artists/", views.ArtistListView.as_view(), name="artist-list"),
     path("artists/me/", views.ArtistMeView.as_view(), name="artist-me"),
+    path("artists/pending/", views.PendingArtistListView.as_view(), name="artist-pending"),
     path(
         "artists/me/sample-works/",
         views.SampleWorkListCreateView.as_view(),
@@ -62,6 +63,8 @@ urlpatterns = [
         name="sample-work-delete",
     ),
     path("artists/<uuid:pk>/", views.ArtistDetailView.as_view(), name="artist-detail"),
+    path("artists/<uuid:pk>/approve/", views.ArtistApproveView.as_view(), name="artist-approve"),
+    path("artists/<uuid:pk>/reject/", views.ArtistRejectView.as_view(), name="artist-reject"),
     path(
         "artists/<uuid:pk>/sample-works/",
         views.ArtistSampleWorkListView.as_view(),

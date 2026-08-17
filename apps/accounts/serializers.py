@@ -97,6 +97,20 @@ class ArtistDetailSerializer(FollowCountsMixin, serializers.ModelSerializer):
         return data
 
 
+class PendingArtistSerializer(serializers.ModelSerializer):
+    id = serializers.UUIDField(source="user_id", read_only=True)
+    email = serializers.EmailField(source="user.email", read_only=True)
+
+    class Meta:
+        model = ArtistProfile
+        fields = ["id", "stage_name", "email", "portfolio_url", "created_at"]
+        read_only_fields = fields
+
+
+class ArtistRejectSerializer(serializers.Serializer):
+    reason = serializers.CharField(allow_blank=False, max_length=500)
+
+
 class ArtistMeSerializer(serializers.ModelSerializer):
     bio = serializers.CharField(source="user.bio", required=False, allow_blank=True)
 
