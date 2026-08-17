@@ -12,6 +12,12 @@ class Tier(models.TextChoices):
     GOLD = "gold", "Gold"
 
 
+# The only durations a subscription can be purchased for (doc.tex §3.2).
+# Shared by Subscription.period_months and Transaction.period_months so the
+# set of valid durations lives in exactly one place.
+PERIOD_MONTHS_CHOICES = [(1, "1"), (3, "3"), (6, "6"), (12, "12")]
+
+
 class SubscriptionPlan(TimeStampedModel):
     tier = models.CharField(max_length=8, choices=Tier.choices, unique=True)
     monthly_price = models.DecimalField(max_digits=10, decimal_places=2)
@@ -44,9 +50,7 @@ class Subscription(UUIDModel, TimeStampedModel):
     plan = models.ForeignKey(
         SubscriptionPlan, on_delete=models.PROTECT, related_name="subscriptions"
     )
-    period_months = models.PositiveSmallIntegerField(
-        choices=[(1, "1"), (3, "3"), (6, "6"), (12, "12")]
-    )
+    period_months = models.PositiveSmallIntegerField(choices=PERIOD_MONTHS_CHOICES)
     price_paid = models.DecimalField(max_digits=10, decimal_places=2)
     starts_at = models.DateTimeField()
     expires_at = models.DateTimeField(db_index=True)
@@ -80,6 +84,10 @@ class Transaction(TimeStampedModel, UUIDModel):
     plan = models.ForeignKey(
         SubscriptionPlan, on_delete=models.PROTECT, related_name="transactions"
     )
+    # The duration the user picked at checkout — has to survive the
+    # redirect round-trip to the payment callback, and nothing else carries
+    # it (the callback only gets `authority` and `Status` back from Zarinpal).
+    period_months = models.PositiveSmallIntegerField(choices=PERIOD_MONTHS_CHOICES, default=1)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     authority = models.CharField(max_length=100, null=True, blank=True)
     ref_id = models.CharField(max_length=100, null=True, blank=True)

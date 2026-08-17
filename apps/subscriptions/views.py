@@ -1,9 +1,6 @@
-from datetime import timedelta
-
 from django.conf import settings
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
-from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -11,9 +8,13 @@ from rest_framework.views import APIView
 
 from apps.common.permissions import IsAdmin
 
-from .models import Subscription, SubscriptionPlan, Transaction
-from .serializers import PlanPriceUpdateSerializer, SubscriptionPlanSerializer
-from .services import initiate_payment, verify_payment
+from .models import SubscriptionPlan, Transaction
+from .serializers import (
+    PaymentStartSerializer,
+    PlanPriceUpdateSerializer,
+    SubscriptionPlanSerializer,
+)
+from .services import PaymentGatewayError, activate_subscription, initiate_payment, verify_payment
 
 
 class PlanListView(generics.ListAPIView):
@@ -37,22 +38,28 @@ class PaymentStartView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        plan_id = request.data.get("plan_id")
-        plan = get_object_or_404(SubscriptionPlan, id=plan_id)
+        serializer = PaymentStartSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        plan = serializer.validated_data["plan"]
+        period_months = int(serializer.validated_data["period_months"])
+        amount = plan.monthly_price * period_months
 
         callback_url = request.build_absolute_uri(reverse("payment-callback"))
         authority, payment_url = initiate_payment(
-            plan.monthly_price, f"Subscription {plan.tier}", callback_url
+            amount, f"Subscription {plan.tier} x{period_months}mo", callback_url
         )
 
-        if authority:
-            Transaction.objects.create(
-                user=request.user, plan=plan, amount=plan.monthly_price, authority=authority
-            )
-            return Response({"payment_url": payment_url}, status=status.HTTP_200_OK)
-        return Response(
-            {"error": "Payment gateway error"}, status=status.HTTP_502_BAD_GATEWAY
+        if not authority:
+            raise PaymentGatewayError()
+
+        Transaction.objects.create(
+            user=request.user,
+            plan=plan,
+            period_months=period_months,
+            amount=amount,
+            authority=authority,
         )
+        return Response({"payment_url": payment_url}, status=status.HTTP_200_OK)
 
 
 class PaymentCallbackView(APIView):
@@ -87,17 +94,7 @@ class PaymentCallbackView(APIView):
             transaction.ref_id = ref_id
             transaction.save()
 
-            Subscription.objects.update_or_create(
-                user=transaction.user,
-                defaults={
-                    "plan": transaction.plan,
-                    "period_months": 1,
-                    "price_paid": transaction.amount,
-                    "starts_at": timezone.now(),
-                    "expires_at": timezone.now() + timedelta(days=30),
-                    "status": Subscription.Status.ACTIVE,
-                },
-            )
+            activate_subscription(transaction)
             return redirect(self._fe("success", ref_id=ref_id))
 
         transaction.status = Transaction.Status.FAILED

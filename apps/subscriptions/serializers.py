@@ -1,6 +1,15 @@
 from rest_framework import serializers
 
-from .models import SubscriptionPlan
+from .models import PERIOD_MONTHS_CHOICES, SubscriptionPlan
+
+
+class PaymentStartSerializer(serializers.Serializer):
+    plan_id = serializers.PrimaryKeyRelatedField(
+        source="plan", queryset=SubscriptionPlan.objects.all()
+    )
+    period_months = serializers.ChoiceField(
+        choices=[c[0] for c in PERIOD_MONTHS_CHOICES], default=1
+    )
 
 
 class SubscriptionPlanSerializer(serializers.ModelSerializer):

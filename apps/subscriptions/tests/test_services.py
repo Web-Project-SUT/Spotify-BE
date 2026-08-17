@@ -1,11 +1,75 @@
+from datetime import datetime
 from decimal import Decimal
 from unittest.mock import patch
 
 from django.test import TestCase, override_settings
+from django.utils import timezone
 
+from apps.accounts.tests.factories import UserFactory
 from apps.subscriptions import services
+from apps.subscriptions.models import Subscription, Transaction
+from apps.subscriptions.tests.factories import SubscriptionFactory, SubscriptionPlanFactory
 
 BASE = "https://sandbox.zarinpal.com/pg"
+
+
+class AddMonthsTests(TestCase):
+    def test_adds_whole_months(self):
+        start = timezone.make_aware(datetime(2026, 1, 15, 10, 0))
+        expected = timezone.make_aware(datetime(2026, 4, 15, 10, 0))
+        self.assertEqual(services.add_months(start, 3), expected)
+
+    def test_rolls_over_the_year(self):
+        start = timezone.make_aware(datetime(2026, 11, 1))
+        self.assertEqual(services.add_months(start, 3), timezone.make_aware(datetime(2027, 2, 1)))
+
+    def test_clamps_the_day_for_a_shorter_month(self):
+        start = timezone.make_aware(datetime(2026, 1, 31))
+        self.assertEqual(services.add_months(start, 1), timezone.make_aware(datetime(2026, 2, 28)))
+
+
+class ActivateSubscriptionTests(TestCase):
+    def test_creates_a_fresh_subscription_when_none_exists(self):
+        plan = SubscriptionPlanFactory()
+        user = UserFactory()
+        transaction = Transaction.objects.create(
+            user=user, plan=plan, period_months=1, amount=plan.monthly_price
+        )
+
+        sub = services.activate_subscription(transaction)
+
+        self.assertEqual(sub.status, Subscription.Status.ACTIVE)
+        self.assertEqual(sub.period_months, 1)
+
+    def test_extends_from_current_expiry_when_still_active(self):
+        plan = SubscriptionPlanFactory()
+        future_expiry = timezone.now() + timezone.timedelta(days=10)
+        existing = SubscriptionFactory(
+            plan=plan, status=Subscription.Status.ACTIVE, expires_at=future_expiry
+        )
+        transaction = Transaction.objects.create(
+            user=existing.user, plan=plan, period_months=1, amount=plan.monthly_price
+        )
+
+        new_sub = services.activate_subscription(transaction)
+
+        self.assertEqual(new_sub.starts_at, future_expiry)
+        existing.refresh_from_db()
+        self.assertEqual(existing.status, Subscription.Status.EXPIRED)
+
+    def test_starts_from_now_when_the_prior_subscription_already_lapsed(self):
+        plan = SubscriptionPlanFactory()
+        user = UserFactory()
+        past_expiry = timezone.now() - timezone.timedelta(days=5)
+        SubscriptionFactory(
+            user=user, plan=plan, status=Subscription.Status.EXPIRED, expires_at=past_expiry
+        )
+        transaction = Transaction.objects.create(
+            user=user, plan=plan, period_months=1, amount=plan.monthly_price
+        )
+
+        new_sub = services.activate_subscription(transaction)
+        self.assertGreater(new_sub.starts_at, past_expiry)
 
 
 class _Resp:
