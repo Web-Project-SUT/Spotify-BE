@@ -24,6 +24,7 @@ class TrackListSerializer(serializers.ModelSerializer):
             "release_year",
             "released_at",
             "release_type",
+            "collaborators",
             "duration_ms",
             "play_count",
             "unique_listener_count",

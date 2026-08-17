@@ -13,7 +13,7 @@ from apps.common.permissions import IsApprovedArtist, IsSilverOrAbove
 from apps.common.quotas import DailyStreamQuota
 from apps.common.views import MediaResourceView
 
-from .filters import TrackFilterSet
+from .filters import AlbumFilterSet, TrackFilterSet
 from .models import Album, Track
 from .permissions import IsArtistOwner
 from .serializers import (
@@ -34,6 +34,10 @@ from apps.playlists.models import Playlist
 
 class AlbumViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete"]
+    filterset_class = AlbumFilterSet
+    search_fields = ["title", "artist__artist_profile__stage_name"]
+    ordering_fields = ["released_at", "title"]
+    ordering = ["-released_at"]
 
     def get_queryset(self):
         queryset = Album.objects.select_related("artist")
