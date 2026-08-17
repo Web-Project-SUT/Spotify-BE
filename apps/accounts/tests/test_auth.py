@@ -1,8 +1,13 @@
+from datetime import timedelta
+
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import AccountStatus, Notification, Role, User
 from apps.accounts.tests.factories import UserFactory
+from apps.subscriptions.models import Subscription
+from apps.subscriptions.tests.factories import SubscriptionFactory
 
 
 class RegisterListenerTests(APITestCase):
@@ -91,6 +96,51 @@ class MeTests(APITestCase):
     def test_me_requires_authentication(self):
         response = self.client.get("/api/auth/me/")
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_me_exposes_the_active_subscription_period_and_expiry(self):
+        """/upgrade needs the expiry and period to offer a renewal (C-14)."""
+        user = UserFactory(email="subscriber@example.com")
+        expires = timezone.now() + timedelta(days=90)
+        SubscriptionFactory(
+            user=user,
+            period_months=3,
+            expires_at=expires,
+            status=Subscription.Status.ACTIVE,
+        )
+        self.client.force_authenticate(user=user)
+
+        response = self.client.get("/api/auth/me/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Read the rendered payload: the frontend consumes camelCase keys.
+        subscription = response.json()["subscription"]
+        self.assertEqual(subscription["tier"], "silver")
+        self.assertEqual(subscription["periodMonths"], 3)
+        self.assertEqual(subscription["status"], Subscription.Status.ACTIVE)
+        self.assertEqual(subscription["expiresAt"][:19], expires.isoformat()[:19])
+
+    def test_me_reports_no_subscription_for_a_basic_listener(self):
+        user = UserFactory(email="freeloader@example.com")
+        self.client.force_authenticate(user=user)
+
+        response = self.client.get("/api/auth/me/")
+
+        self.assertIsNone(response.json()["subscription"])
+        self.assertEqual(response.json()["tier"], "basic")
+
+    def test_me_ignores_a_lapsed_subscription_like_tier_does(self):
+        user = UserFactory(email="lapsed@example.com")
+        SubscriptionFactory(
+            user=user,
+            expires_at=timezone.now() - timedelta(days=1),
+            status=Subscription.Status.ACTIVE,
+        )
+        self.client.force_authenticate(user=user)
+
+        response = self.client.get("/api/auth/me/")
+
+        self.assertIsNone(response.json()["subscription"])
+        self.assertEqual(response.json()["tier"], "basic")
 
 
 class RefreshTests(APITestCase):

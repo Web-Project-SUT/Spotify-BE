@@ -1,10 +1,12 @@
 from django.conf import settings
 from django.db.models import Sum
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from apps.common.validators import AllowedExtension, MaxFileSize
+from apps.subscriptions.models import Subscription
 
 from . import services
 from .models import AccountStatus, ArtistProfile, Follow, SampleWork, User, UserPreferences
@@ -165,9 +167,28 @@ class UserPreferencesSerializer(serializers.ModelSerializer):
         read_only_fields = ["updated_at"]
 
 
+class MySubscriptionSerializer(serializers.ModelSerializer):
+    """The caller's own active subscription, read-only.
+
+    `User.tier` already tells the frontend *what* it bought; the expiry and
+    period are what let it show when the plan runs out and offer a renewal
+    (doc.tex §3.2 requires both the interval and "users' need to renew it").
+    Nested on /auth/me/ rather than given its own endpoint, since it is only
+    ever wanted alongside the tier that is already there.
+    """
+
+    tier = serializers.CharField(source="plan.tier", read_only=True)
+
+    class Meta:
+        model = Subscription
+        fields = ["tier", "period_months", "starts_at", "expires_at", "status"]
+        read_only_fields = fields
+
+
 class UserMeSerializer(serializers.ModelSerializer):
     tier = serializers.CharField(read_only=True)
     preferences = serializers.SerializerMethodField()
+    subscription = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -185,6 +206,7 @@ class UserMeSerializer(serializers.ModelSerializer):
             "gender",
             "created_at",
             "preferences",
+            "subscription",
         ]
         read_only_fields = ["id", "username", "role", "status", "tier", "created_at"]
 
@@ -196,6 +218,18 @@ class UserMeSerializer(serializers.ModelSerializer):
         # where a lazy INSERT would be a surprising side effect.
         prefs = getattr(obj, "preferences", None) or UserPreferences(user=obj)
         return UserPreferencesSerializer(prefs).data
+
+    @extend_schema_field(MySubscriptionSerializer(allow_null=True))
+    def get_subscription(self, obj):
+        # Same window as User.tier, so the two can never disagree.
+        active = (
+            obj.subscriptions.filter(
+                status=Subscription.Status.ACTIVE, expires_at__gt=timezone.now()
+            )
+            .select_related("plan")
+            .first()
+        )
+        return MySubscriptionSerializer(active).data if active else None
 
 
 class MeUpdateSerializer(serializers.ModelSerializer):
