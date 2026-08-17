@@ -15,13 +15,12 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.dev')
 django_asgi_app = get_asgi_application()
 
 from channels.routing import ProtocolTypeRouter, URLRouter
-from channels.auth import AuthMiddlewareStack
 from django.urls import path
-from apps.common.consumers import GroupSessionConsumer
+from apps.common.consumers import GroupSessionConsumer, JWTAuthMiddlewareStack
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
-    "websocket": AuthMiddlewareStack(
+    "websocket": JWTAuthMiddlewareStack(
         URLRouter([
             path('ws/session/<str:session_id>/', GroupSessionConsumer.as_asgi()),
         ])
