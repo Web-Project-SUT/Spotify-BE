@@ -1,3 +1,4 @@
+from django.db import models
 from django.utils import timezone
 from django_filters import rest_framework as filters
 
@@ -25,4 +26,7 @@ class TrackFilterSet(filters.FilterSet):
     def filter_early_access(self, queryset, name, value):
         if value:
             return queryset.filter(early_access_until__gt=timezone.now())
-        return queryset
+        return queryset.filter(
+            models.Q(early_access_until__isnull=True)
+            | models.Q(early_access_until__lte=timezone.now())
+        )

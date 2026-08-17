@@ -1,5 +1,6 @@
 import mimetypes
 
+from django.db.models import Prefetch
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
@@ -42,7 +43,9 @@ class AlbumViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = Album.objects.select_related("artist")
         if self.action != "list":
-            queryset = queryset.prefetch_related("tracks")
+            queryset = queryset.prefetch_related(
+                Prefetch("tracks", queryset=Track.objects.visible_to(self.request.user))
+            )
         return queryset
 
     def get_serializer_class(self):
@@ -90,7 +93,7 @@ class TrackViewSet(viewsets.ModelViewSet):
     ordering = ["-released_at"]
 
     def get_queryset(self):
-        return Track.objects.select_related("artist", "album")
+        return Track.objects.visible_to(self.request.user).select_related("artist", "album")
 
     def get_serializer_class(self):
         if self.action in ("create", "update", "partial_update"):
@@ -156,11 +159,12 @@ class RecommendationAPIView(APIView):
                     liked_artists.add(entry.track.artist.id)
         
         # اگر کاربر سابقه داشت، آهنگ‌های همان هنرمندان را پیشنهاد بده
+        visible = Track.objects.visible_to(user)
         if liked_artists:
-            recommended_tracks = Track.objects.filter(artist_id__in=liked_artists).distinct()[:10]
+            recommended_tracks = visible.filter(artist_id__in=liked_artists).distinct()[:10]
         # در غیر این صورت، جدیدترین آهنگ‌ها را برگردان
         else:
-            recommended_tracks = Track.objects.all().order_by('-created_at')[:10]
+            recommended_tracks = visible.order_by('-created_at')[:10]
             
         # استفاده از نام درست سریالایزر پروژه شما
         serializer = TrackListSerializer(recommended_tracks, many=True)

@@ -41,7 +41,27 @@ class Album(UUIDModel, TimeStampedModel):
         return self.title
 
 
+class TrackQuerySet(models.QuerySet):
+    # The single place early-access visibility is decided — every entry
+    # point (list, album detail, recommendations) must filter through this
+    # rather than repeating the rule. Gold listeners and support/admin see
+    # everything; an artist always sees their own embargoed tracks (they
+    # need them in the artist panel) but not other artists'.
+    def visible_to(self, user):
+        now = timezone.now()
+        embargoed = models.Q(early_access_until__isnull=False, early_access_until__gt=now)
+        if not user or not user.is_authenticated:
+            return self.exclude(embargoed)
+        if user.role in ("support", "admin"):
+            return self
+        if user.tier == "gold":
+            return self
+        return self.exclude(embargoed & ~models.Q(artist_id=user.id))
+
+
 class Track(UUIDModel, TimeStampedModel):
+    objects = TrackQuerySet.as_manager()
+
     artist = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="tracks"
     )
