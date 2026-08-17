@@ -207,6 +207,9 @@ class Notification(UUIDModel, TimeStampedModel):
     message = models.TextField()
     type = models.CharField(max_length=16, choices=Type.choices)
     is_read = models.BooleanField(default=False, db_index=True)
+    # A frontend-relative path (e.g. "/album/<id>") the notification card
+    # navigates to when clicked. Blank when there's nothing to link to.
+    link = models.CharField(max_length=255, blank=True, default="")
 
     class Meta:
         ordering = ["-created_at"]

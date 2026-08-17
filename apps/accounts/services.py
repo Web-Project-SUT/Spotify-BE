@@ -79,7 +79,7 @@ def get_preferences(user):
 SUPPRESSIBLE_NOTIFICATION_TYPES = frozenset({Notification.Type.RELEASE})
 
 
-def notify(recipients, *, type, title, message):
+def notify(recipients, *, type, title, message, link=""):
     recipients = list(recipients)
     if type in SUPPRESSIBLE_NOTIFICATION_TYPES:
         limited = set(
@@ -89,6 +89,6 @@ def notify(recipients, *, type, title, message):
         )
         recipients = [recipient for recipient in recipients if recipient.pk not in limited]
     Notification.objects.bulk_create(
-        Notification(recipient=recipient, type=type, title=title, message=message)
+        Notification(recipient=recipient, type=type, title=title, message=message, link=link)
         for recipient in recipients
     )

@@ -1,5 +1,6 @@
 from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import send_mail
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
@@ -332,4 +333,30 @@ class NotificationMarkReadView(APIView):
 
     def post(self, request):
         request.user.notifications.filter(is_read=False).update(is_read=True)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class NotificationItemReadView(APIView):
+    """Mark a single one of the user's notifications as read."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        updated = request.user.notifications.filter(pk=pk).update(is_read=True)
+        if not updated:
+            raise Http404
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class NotificationItemView(APIView):
+    """Hide a single one of the user's notifications (deletes the row —
+    a notification the user can never see again is indistinguishable from
+    a deleted one, and it needs no extra "hidden" column)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, pk):
+        deleted, _ = request.user.notifications.filter(pk=pk).delete()
+        if not deleted:
+            raise Http404
         return Response(status=status.HTTP_204_NO_CONTENT)

@@ -30,6 +30,16 @@ urlpatterns = [
         name="me-notifications-read",
     ),
     path(
+        "auth/me/notifications/<uuid:pk>/read/",
+        views.NotificationItemReadView.as_view(),
+        name="me-notification-item-read",
+    ),
+    path(
+        "auth/me/notifications/<uuid:pk>/",
+        views.NotificationItemView.as_view(),
+        name="me-notification-item",
+    ),
+    path(
         "auth/password-reset/",
         views.PasswordResetRequestView.as_view(),
         name="password-reset",

@@ -41,3 +41,33 @@ class NotificationTests(TestCase):
         res = self.client.post(reverse("me-notifications-read"))
         self.assertEqual(res.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(self.user.notifications.filter(is_read=False).exists())
+
+    def test_mark_one_read(self):
+        self.client.force_authenticate(user=self.user)
+        mine = self.user.notifications.get()
+        res = self.client.post(reverse("me-notification-item-read", args=[mine.id]))
+        self.assertEqual(res.status_code, status.HTTP_204_NO_CONTENT)
+        mine.refresh_from_db()
+        self.assertTrue(mine.is_read)
+
+    def test_cannot_mark_another_users_notification_read(self):
+        self.client.force_authenticate(user=self.user)
+        theirs = self.other.notifications.get()
+        res = self.client.post(reverse("me-notification-item-read", args=[theirs.id]))
+        self.assertEqual(res.status_code, status.HTTP_404_NOT_FOUND)
+        theirs.refresh_from_db()
+        self.assertFalse(theirs.is_read)
+
+    def test_hide_one_notification(self):
+        self.client.force_authenticate(user=self.user)
+        mine = self.user.notifications.get()
+        res = self.client.delete(reverse("me-notification-item", args=[mine.id]))
+        self.assertEqual(res.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Notification.objects.filter(id=mine.id).exists())
+
+    def test_cannot_hide_another_users_notification(self):
+        self.client.force_authenticate(user=self.user)
+        theirs = self.other.notifications.get()
+        res = self.client.delete(reverse("me-notification-item", args=[theirs.id]))
+        self.assertEqual(res.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(Notification.objects.filter(id=theirs.id).exists())

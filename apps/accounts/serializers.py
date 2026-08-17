@@ -311,5 +311,5 @@ class NotificationSerializer(serializers.ModelSerializer):
         from .models import Notification
 
         model = Notification
-        fields = ["id", "title", "message", "type", "is_read", "created_at"]
+        fields = ["id", "title", "message", "type", "is_read", "link", "created_at"]
         read_only_fields = fields

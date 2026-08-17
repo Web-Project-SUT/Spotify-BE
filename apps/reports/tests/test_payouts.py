@@ -5,7 +5,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from apps.accounts.models import Role
+from apps.accounts.models import Notification, Role
 from apps.accounts.tests.factories import ArtistUserFactory, UserFactory
 from apps.catalog.services import record_stream
 from apps.catalog.tests.factories import TrackFactory
@@ -58,6 +58,38 @@ class BuildMonthlyPayoutsTests(APITestCase):
         self.assertEqual(result["skipped_settled"], 1)
         self.assertEqual(result["updated"], 0)
         self.assertEqual(payout.amount, Decimal("999.99"))
+
+    def test_notifies_the_artist_the_payout_was_calculated(self):
+        artist = ArtistUserFactory()
+        track = TrackFactory(artist=artist)
+        listener = UserFactory()
+        record_stream(user=listener, track=track)
+
+        period = date.today().replace(day=1)
+        services.build_monthly_payouts(period=period)
+
+        self.assertTrue(
+            Notification.objects.filter(
+                recipient=artist, type="subscription", link="/artist-panel"
+            ).exists()
+        )
+
+    def test_skipped_settled_row_does_not_renotify(self):
+        artist = ArtistUserFactory()
+        track = TrackFactory(artist=artist)
+        listener = UserFactory()
+        record_stream(user=listener, track=track)
+
+        period = date.today().replace(day=1)
+        services.build_monthly_payouts(period=period)
+        payout = ArtistPayout.objects.get(artist=artist, period_month=period)
+        payout.status = ArtistPayout.Status.PAID
+        payout.save()
+        Notification.objects.filter(recipient=artist).delete()
+
+        services.build_monthly_payouts(period=period)
+
+        self.assertFalse(Notification.objects.filter(recipient=artist).exists())
 
 
 class GeneratePayoutsViewTests(APITestCase):

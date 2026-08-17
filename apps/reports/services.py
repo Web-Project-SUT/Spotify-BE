@@ -7,7 +7,8 @@ from django.db.models.functions import TruncMonth
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from apps.accounts.models import User
+from apps.accounts.models import Notification, User
+from apps.accounts.services import notify
 from apps.catalog.models import Album, PlayEvent, Track
 from apps.common.quotas import DailyStreamQuota
 from apps.subscriptions.models import Subscription, Transaction
@@ -107,6 +108,7 @@ def build_monthly_payouts(*, period: date) -> dict:
     )
 
     created = updated = skipped_settled = 0
+    touched_artist_ids = []
     with transaction.atomic():
         for row in rows:
             existing = ArtistPayout.objects.filter(
@@ -132,10 +134,22 @@ def build_monthly_payouts(*, period: date) -> dict:
                     "policy": policy,
                 },
             )
+            touched_artist_ids.append(row["track__artist"])
             if was_created:
                 created += 1
             else:
                 updated += 1
+
+    # Outside the transaction: a notification failure shouldn't roll back
+    # payout rows that were successfully computed.
+    if touched_artist_ids:
+        notify(
+            User.objects.filter(id__in=touched_artist_ids),
+            type=Notification.Type.SUBSCRIPTION,
+            title="Monthly earnings calculated",
+            message=f"Your payout for {period:%B %Y} has been calculated.",
+            link="/artist-panel",
+        )
 
     return {
         "period": period,
